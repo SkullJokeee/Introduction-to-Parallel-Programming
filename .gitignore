@@ -1,0 +1,12 @@
+*
+
+!.gitignore
+
+!README.md
+
+!代码/
+!代码/Project0321_1
+
+!代码/**/*.cpp
+!代码/**/*.h
+!代码/**/*.cbp
