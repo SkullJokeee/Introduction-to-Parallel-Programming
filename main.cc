@@ -12,6 +12,8 @@
 #include "hnswlib/hnswlib/hnswlib.h"
 #include "flat_scan.h"
 #include "simd.h"
+#include "SQ_simd.h"
+#include "PQ_simd.h"
 // 可以自行添加需要的头文件
 
 using namespace hnswlib;
@@ -85,10 +87,17 @@ int main(int argc, char *argv[])
     // 不建议在正式测试查询时同时构建索引，否则性能波动会较大
     // 下面是一个构建hnsw索引的示例
     // build_index(base, base_number, vecdim);
+
     ////////
     SQIndex sq_idx = build_sq_index(base, base_number, vecdim);
 
-    
+    size_t pq_n = 0, cb_n = 0;
+    size_t pq_dim = 0, cb_dim = 0;
+
+    auto codebook_pq = LoadData<float>("files/pq_codebook.bin", cb_n, cb_dim);      // 4*256个24维向量
+    auto base_pq = LoadData<uint8_t>("files/pq_base.bin", pq_n, pq_dim);    // base_number个4维向量
+
+
     // 查询测试代码
     for(int i = 0; i < test_number; ++i) {
         const unsigned long Converter = 1000 * 1000;
@@ -98,7 +107,9 @@ int main(int argc, char *argv[])
         // 该文件已有代码中你只能修改该函数的调用方式
         // 可以任意修改函数名，函数参数或者改为调用成员函数，但是不能修改函数返回值。
         // auto res = flat_search(base, test_query + i*vecdim, base_number, vecdim, k); 
-        auto res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);
+        // auto res = flat_simd_search(base, test_query + i*vecdim, base_number, vecdim, k); 
+        // auto res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);  // 同时对sq_idx解除注释
+        auto res = pq_adc_search(base, test_query + i*vecdim, cb_n, pq_n, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq); // 同时对4行解除注释
         ////////
 
         struct timeval newVal;

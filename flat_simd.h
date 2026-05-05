@@ -4,7 +4,7 @@
 #include <arm_neon.h>
 #include "simd.h"
 
-std::priority_queue<std::pair<float, uint32_t>> flat_search(const float* base, const float* query, size_t base_number, size_t vecdim, size_t k){
+std::priority_queue<std::pair<float, uint32_t>> flat_simd_search(const float* base, const float* query, size_t base_number, size_t vecdim, size_t k){
 
     std::priority_queue<std::pair<float, uint32_t>> q;
 
