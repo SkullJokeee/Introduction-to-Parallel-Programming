@@ -11,10 +11,10 @@
 #include <omp.h>
 #include "hnswlib/hnswlib/hnswlib.h"
 #include "flat_scan.h"
+// 可以自行添加需要的头文件
 #include "simd.h"
 #include "SQ_simd.h"
 #include "PQ_simd.h"
-// 可以自行添加需要的头文件
 
 using namespace hnswlib;
 
@@ -76,6 +76,25 @@ int main(int argc, char *argv[])
     // 只测试前2000条查询
     test_number = 2000;
 
+    /////////
+    size_t n = 100000, d = 96;
+    float* mock_test = new float[test_number * d];
+    int* mock_test_gt = new int[test_number * d];
+    float* mock_base = new float[n * d];
+    for(size_t i = 0; i < test_number * d; ++i){
+        mock_test[i] = (float)rand() / RAND_MAX;
+        mock_test_gt[i] = rand() % n;
+    }
+    for(size_t i = 0; i < n * d; ++i){
+        mock_base[i] = (float)rand() / RAND_MAX;
+    }
+    test_query = mock_test;
+    test_gt = mock_test_gt;
+    base = mock_base;
+    base_number = n;
+    vecdim = 96;
+    ////////
+
     const size_t k = 10;
 
     std::vector<SearchResult> results;
@@ -97,6 +116,9 @@ int main(int argc, char *argv[])
     auto codebook_pq = LoadData<float>("files/pq_codebook.bin", cb_n, cb_dim);      // 4*256个24维向量
     auto base_pq = LoadData<uint8_t>("files/pq_base.bin", pq_n, pq_dim);    // base_number个4维向量
 
+    auto aligned_base = align<float>(base, base_number * vecdim);
+    auto aligned_query = align<float>(test_query, test_number * vecdim); ////0509
+    
 
     // 查询测试代码
     for(int i = 0; i < test_number; ++i) {
@@ -108,8 +130,12 @@ int main(int argc, char *argv[])
         // 可以任意修改函数名，函数参数或者改为调用成员函数，但是不能修改函数返回值。
         // auto res = flat_search(base, test_query + i*vecdim, base_number, vecdim, k); 
         // auto res = flat_simd_search(base, test_query + i*vecdim, base_number, vecdim, k); 
-        // auto res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);  // 同时对sq_idx解除注释
-        auto res = pq_adc_search(base, test_query + i*vecdim, cb_n, pq_n, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq); // 同时对4行解除注释
+        // auto res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);
+        // auto res = pq_adc_search(base, test_query + i*vecdim, cb_n, pq_n, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq);
+        // auto res = flat_search(aligned_base, aligned_query + i*vecdim, base_number, vecdim, k); 
+        // auto res = flat_simd_search(aligned_base, aligned_query + i*vecdim, base_number, vecdim, k); 
+        // auto res = sq_search(aligned_base, aligned_query + i*vecdim, base_number, vecdim, k, sq_idx);
+        auto res = pq_adc_search(aligned_base, aligned_query + i*vecdim, cb_n, pq_n, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq);
         ////////
 
         struct timeval newVal;
@@ -144,5 +170,7 @@ int main(int argc, char *argv[])
     // 浮点误差可能导致一些精确算法平均recall不是1
     std::cout << "average recall: "<<avg_recall / test_number<<"\n";
     std::cout << "average latency (us): "<<avg_latency / test_number<<"\n";
+    free(aligned_base);
+    free(aligned_query);
     return 0;
 }

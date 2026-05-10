@@ -7,9 +7,13 @@
  #include "flat_simd.h"
 
 struct SQIndex {
-    std::vector<uint8_t> vecBase;
+    uint8_t* qtdBase;
     std::vector<float> mins;
     std::vector<float> maxs;
+
+    ~SQIndex() {
+        free(qtdBase);
+    }
 };
 
 uint8_t scalarQuantization(float f, float min, float max){
@@ -20,7 +24,8 @@ uint8_t scalarQuantization(float f, float min, float max){
 
     float scale = m / (max-min);
 
-    float tRst = std::round((f - min) * scale);
+    // float tRst = std::round((f - min) * scale);
+    float tRst = (f - min) * scale + 0.5f; //0507
     if (tRst < 0){
         tRst = 0.0f;
     }
@@ -33,26 +38,31 @@ uint8_t scalarQuantization(float f, float min, float max){
     return rst;
 }
 
-SQIndex build_sq_index(float* base, size_t base_number, size_t vecdim) {
+SQIndex build_sq_index(float* base, size_t base_number, size_t vecdim){
     SQIndex idx;
-    idx.vecBase.resize(base_number * vecdim);
+    idx.qtdBase = align<uint8_t>(base_number * vecdim);
     idx.mins.resize(vecdim);
     idx.maxs.resize(vecdim);
 
-    for(int d = 0; d < vecdim; ++d) {
-        float min_val = base[d], max_val = base[d];
-        for(int i = 0; i < base_number; ++i) {
+    for(int d = 0; d < vecdim; ++d){
+        float min = base[d], max = base[d];
+        for(int i = 0; i < base_number; ++i){
             float val = base[d + i * vecdim];
-            if(val < min_val) min_val = val;
-            if(val > max_val) max_val = val;
+            if(val < min){
+                min = val;
+            }
+            if(val > max){
+                max = val;
+            }
         }
-        idx.mins[d] = min_val;
-        idx.maxs[d] = max_val;
+        idx.mins[d] = min;
+        idx.maxs[d] = max;
     }
 
-    for(int i = 0; i < base_number; ++i) {
-        for(int d = 0; d < vecdim; ++d) {
-            idx.vecBase[d + i * vecdim] = scalarQuantization(base[d + i * vecdim], idx.mins[d], idx.maxs[d]);
+
+    for(int i = 0; i < base_number; ++i){
+        for(int d = 0; d < vecdim; ++d){
+            idx.qtdBase[d + i * vecdim] = scalarQuantization(base[d + i * vecdim], idx.mins[d], idx.maxs[d]);
         }
     }
     
@@ -61,47 +71,68 @@ SQIndex build_sq_index(float* base, size_t base_number, size_t vecdim) {
 
 std::priority_queue<std::pair<float, uint32_t>> sq_search(float* base, float* query, size_t base_number, size_t vecdim, size_t k,const SQIndex& sq_idx){    
     
-    std::priority_queue<std::pair<uint32_t, uint32_t>, std::vector<std::pair<uint32_t, uint32_t>>, std::greater<std::pair<uint32_t, uint32_t>>> q;
+    std::priority_queue<std::pair<uint32_t, uint32_t>> q;
+    // std::vector<std::pair<uint32_t, uint32_t>> v(base_number);
 
     std::vector<uint8_t> vecQ(vecdim);
 
-    size_t p = 1000;
+    size_t p = 15;
     p = std::max(p,k);
-    p = 0;
+    p = std::min(p,base_number);
 
-    for(int d = 0; d < vecdim; ++d) {
+    for(int d = 0; d < vecdim; ++d){
         vecQ[d] = scalarQuantization(query[d], sq_idx.mins[d], sq_idx.maxs[d]);
     }
 
-    const uint8_t* arrB = sq_idx.vecBase.data();
     uint8_t* arrQ = vecQ.data();
 
-    for(int i = 0; i < base_number; i++) {
-        const uint8_t* current = arrB + i * vecdim;
-        uint32_t dot = InnerProductSIMDNeon(current, arrQ, vecdim);
+    // for(int i = 0; i < base_number; i++){
+        // const uint8_t* current = sq_idx.qtdBase + i * vecdim;
+        // uint32_t dis = EucDisSIMDNeon(current, arrQ, vecdim);
 
+    //     v[i] = {dis, i};
+    // }
+
+    // std::nth_element(v.begin(), v.begin() + p, v.end()); // 快速选择
+
+    for(int i = 0; i < base_number; i++){
+        // __builtin_prefetch(sq_idx.qtdBase + (i + 4) * vecdim, 0, 1);
+
+        const uint8_t* current = sq_idx.qtdBase + i * vecdim;
+        uint32_t dis = EucDisSIMDNeon(current, arrQ, vecdim);
         if(q.size() < p) {
-            q.push({dot, i});
+            q.push({dis, i});
         }
         else {
-            if(dot > q.top().first) {
-                q.pop(); 
-                q.push({dot, i});
+            if(dis < q.top().first) {
+                q.pop();
+                q.push({dis, i});
             }
         }
     }
 
-    std::vector<float> tempRst(p * vecdim);
+    std::priority_queue<std::pair<float, uint32_t>> rst_q;
 
     for(int i = 0; i < p; i ++){
-        int idx = q.top().second;
-        for(int j = 0; j < vecdim; j++){
-            tempRst[i * vecdim + j] = base[idx * vecdim + j];
-        }
+        // uint32_t idx = v[i].second;
+        uint32_t idx = q.top().second;
         q.pop();
+
+        const float* current = base + idx * vecdim;
+        
+        float dis = InnerProductSIMDNeon(current, query, vecdim);
+
+        if(rst_q.size() < k) {
+            rst_q.push({dis, idx});
+        }
+        else {
+            if(dis < rst_q.top().first) {
+                rst_q.pop(); 
+                rst_q.push({dis, idx});
+            }
+        }
     }
 
-    float* t = tempRst.data();
+    return rst_q;
 
-    return flat_simd_search(t, query, p, vecdim, k);
 }
