@@ -12,7 +12,7 @@ std::priority_queue<std::pair<float, uint32_t>> pq_adc_search(float* base, float
 
     size_t p = 4000;
     p = std::max(p,k);
-    p = std::min(p,pq_n);
+    p = std::min(p,pq_n);    // pq_n = base_number
 
     float* lut = align<float>(cb_n);
 

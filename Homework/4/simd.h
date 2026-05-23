@@ -50,7 +50,7 @@ struct simd8float32 {  // 用于高效处理8个32位浮点数的并行计算。
 
 };
 
-float InnerProductSIMDNeon8(const float* b1, const float* b2, size_t vecdim) { // 计算内积
+float InnerProductSIMDNeon8(const float* b1, const float* b2, size_t vecdim) {
     assert(vecdim % 8 == 0); // 假设维度能被8整除
 
     simd8float32 sum(0.0); // 8xfloat32全部初始化为0
@@ -67,18 +67,17 @@ float InnerProductSIMDNeon8(const float* b1, const float* b2, size_t vecdim) { /
 float InnerProductSIMDNeon(const float* b1, const float* b2, size_t vecdim) {
     assert(vecdim % 8 == 0); // 假设维度能被8整除
 
-    b1 = (float*)__builtin_assume_aligned(b1, 32);
-    b2 = (float*)__builtin_assume_aligned(b2, 32);
+    // b1 = (float*)__builtin_assume_aligned(b1, 32);
+    // b2 = (float*)__builtin_assume_aligned(b2, 32);
 
+    assert(vecdim % 32 == 0);
+    
     simd8float32 sum1(0.0);
     simd8float32 sum2(0.0);
     simd8float32 sum3(0.0);
     simd8float32 sum4(0.0);
 
-    assert(vecdim % 32 == 0);
-
     for (int i = 0; i < vecdim; i += 32) {
-
         simd8float32 s11(b1 + i), s12(b2 + i);
         simd8float32 s21(b1 + i + 8), s22(b2 + i + 8);
         simd8float32 s31(b1 + i + 16), s32(b2 + i + 16);
@@ -90,9 +89,17 @@ float InnerProductSIMDNeon(const float* b1, const float* b2, size_t vecdim) {
         sum4.innerProduct(s41, s42);
     }
 
-    float dis = sum1.getSum() + sum2.getSum() + sum3.getSum() + sum4.getSum();
+    float32x4_t vsum1 = vaddq_f32(sum1.data.val[0], sum1.data.val[1]); ////
+    float32x4_t vsum2 = vaddq_f32(sum2.data.val[0], sum2.data.val[1]);
+    float32x4_t vsum3 = vaddq_f32(sum3.data.val[0], sum3.data.val[1]);
+    float32x4_t vsum4 = vaddq_f32(sum4.data.val[0], sum4.data.val[1]);
 
-    return 1 - dis;
+    float32x4_t vsum5 = vaddq_f32(vsum1, vsum2);
+    float32x4_t vsum6 = vaddq_f32(vsum3, vsum4);
+    float32x4_t sum = vaddq_f32(vsum5, vsum6);
+
+    return 1 - vaddvq_f32(sum);
+
 }
 
 uint32_t EucDisSIMDNeon(const uint8_t* b1, const uint8_t* b2, size_t vecdim) {

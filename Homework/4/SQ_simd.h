@@ -59,7 +59,6 @@ SQIndex build_sq_index(float* base, size_t base_number, size_t vecdim){
         idx.maxs[d] = max;
     }
 
-
     for(int i = 0; i < base_number; ++i){
         for(int d = 0; d < vecdim; ++d){
             idx.qtdBase[d + i * vecdim] = scalarQuantization(base[d + i * vecdim], idx.mins[d], idx.maxs[d]);
@@ -72,7 +71,6 @@ SQIndex build_sq_index(float* base, size_t base_number, size_t vecdim){
 std::priority_queue<std::pair<float, uint32_t>> sq_search(float* base, float* query, size_t base_number, size_t vecdim, size_t k,const SQIndex& sq_idx){    
     
     std::priority_queue<std::pair<uint32_t, uint32_t>> q;
-    // std::vector<std::pair<uint32_t, uint32_t>> v(base_number);
 
     std::vector<uint8_t> vecQ(vecdim);
 

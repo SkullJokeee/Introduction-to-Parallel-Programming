@@ -15,6 +15,7 @@
 #include "simd.h"
 #include "SQ_simd.h"
 #include "PQ_simd.h"
+#include <pthread.h>
 
 using namespace hnswlib;
 
@@ -63,16 +64,73 @@ void build_index(float* base, size_t base_number, size_t vecdim)
     appr_alg->saveIndex(path_index);
 }
 
+size_t test_number = 0, base_number = 0;
+size_t test_gt_d = 0, vecdim = 0;
+size_t pq_n = 0, cb_n = 0;
+size_t pq_dim = 0, cb_dim = 0;
+const size_t k = 10;
+float* test_query;
+int* test_gt;
+float* base;
+float* codebook_pq;
+uint8_t* base_pq;
+
+struct ThreadArg{
+    int start;
+    int end;
+    std::vector<SearchResult>* results;
+};
+
+
+void* thread_search(void* arg) {
+    ThreadArg* args = (ThreadArg*)arg;
+    const unsigned long Converter = 1000 * 1000;
+
+    for(int i = args->start; i < args->end; i++) {
+        struct timeval val;
+        gettimeofday(&val, NULL);
+
+        // auto res = flat_search(base, test_query + i*vecdim, base_number, vecdim, k); 
+        auto res = flat_simd_search(base, test_query + i*vecdim, base_number, vecdim, k); 
+        // auto res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);
+        // auto res = pq_adc_search(base, test_query + i*vecdim, cb_n, pq_n, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq);
+
+        struct timeval newVal;
+        gettimeofday(&newVal, NULL);
+        int64_t diff = (newVal.tv_sec * Converter + newVal.tv_usec) - (val.tv_sec * Converter + val.tv_usec);
+
+        std::set<uint32_t> gtset;
+        for(int j = 0; j < k; ++j){
+            int r = test_gt[j + i * test_gt_d];
+            gtset.insert(r);
+        }
+
+        size_t acc = 0;
+        while (res.size()) {   
+            int x = res.top().second;
+            if(gtset.find(x) != gtset.end()){
+                ++acc;
+            }
+            res.pop();
+        }
+        float recall = (float)acc / k;
+
+        (*args->results)[i] = {recall, diff};
+    }
+    return nullptr;
+}
+
+
 
 int main(int argc, char *argv[])
 {
-    size_t test_number = 0, base_number = 0;
-    size_t test_gt_d = 0, vecdim = 0;
+    test_number = 0; base_number = 0;
+    test_gt_d = 0; vecdim = 0;
 
     std::string data_path = "/anndata/"; 
-    auto test_query = LoadData<float>(data_path + "DEEP100K.query.fbin", test_number, vecdim);
-    auto test_gt = LoadData<int>(data_path + "DEEP100K.gt.query.100k.top100.bin", test_number, test_gt_d);
-    auto base = LoadData<float>(data_path + "DEEP100K.base.100k.fbin", base_number, vecdim);
+    test_query = LoadData<float>(data_path + "DEEP100K.query.fbin", test_number, vecdim);
+    test_gt = LoadData<int>(data_path + "DEEP100K.gt.query.100k.top100.bin", test_number, test_gt_d);
+    base = LoadData<float>(data_path + "DEEP100K.base.100k.fbin", base_number, vecdim);
     // 只测试前2000条查询
     test_number = 2000;
 
@@ -95,7 +153,7 @@ int main(int argc, char *argv[])
     vecdim = 96;
     ////////
 
-    const size_t k = 10;
+    // const size_t k = 10;
 
     std::vector<SearchResult> results;
     results.resize(test_number);
@@ -110,55 +168,32 @@ int main(int argc, char *argv[])
     ////////
     SQIndex sq_idx = build_sq_index(base, base_number, vecdim);
 
-    size_t pq_n = 0, cb_n = 0;
-    size_t pq_dim = 0, cb_dim = 0;
+    // size_t pq_n = 0, cb_n = 0;
+    // size_t pq_dim = 0, cb_dim = 0;
 
-    auto codebook_pq = LoadData<float>("files/pq_codebook.bin", cb_n, cb_dim);      // 4*256个24维向量
-    auto base_pq = LoadData<uint8_t>("files/pq_base.bin", pq_n, pq_dim);    // base_number个4维向量
+    codebook_pq = LoadData<float>("files/pq_codebook.bin", cb_n, cb_dim);      // 4*256个24维向量
+    base_pq = LoadData<uint8_t>("files/pq_base.bin", pq_n, pq_dim);    // base_number个4维向量
 
-    auto aligned_base = align<float>(base, base_number * vecdim);
-    auto aligned_query = align<float>(test_query, test_number * vecdim); ////0509
+    ////
+    int num = 8;
+    std::vector<pthread_t> threads(num);
+    std::vector<ThreadArg> thread_args(num);
+    
+    int size = test_number / num;  // 2000 / 8
 
-    // 查询测试代码
-    for(int i = 0; i < test_number; ++i) {
-        const unsigned long Converter = 1000 * 1000;
-        struct timeval val;
-        int ret = gettimeofday(&val, NULL);
+    for(int i = 0; i < num; i++){
+        thread_args[i].start = i * size;
+        thread_args[i].end = (i + 1) * size;
+        thread_args[i].results = &results;
+        // thread_args[i].test_gt = test_gt;
 
-        // 该文件已有代码中你只能修改该函数的调用方式
-        // 可以任意修改函数名，函数参数或者改为调用成员函数，但是不能修改函数返回值。
-        // auto res = flat_search(base, test_query + i*vecdim, base_number, vecdim, k); 
-        // auto res = flat_simd_search(base, test_query + i*vecdim, base_number, vecdim, k); 
-        // auto res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);
-        // auto res = pq_adc_search(base, test_query + i*vecdim, cb_n, pq_n, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq);
-        // auto res = flat_search(aligned_base, aligned_query + i*vecdim, base_number, vecdim, k); 
-        // auto res = flat_simd_search(aligned_base, aligned_query + i*vecdim, base_number, vecdim, k); 
-        // auto res = sq_search(aligned_base, aligned_query + i*vecdim, base_number, vecdim, k, sq_idx);
-        auto res = pq_adc_search(aligned_base, aligned_query + i*vecdim, cb_n, pq_n, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq);
-        ////////
-
-        struct timeval newVal;
-        ret = gettimeofday(&newVal, NULL);
-        int64_t diff = (newVal.tv_sec * Converter + newVal.tv_usec) - (val.tv_sec * Converter + val.tv_usec);
-
-        std::set<uint32_t> gtset;
-        for(int j = 0; j < k; ++j){
-            int t = test_gt[j + i*test_gt_d];
-            gtset.insert(t);
-        }
-
-        size_t acc = 0;
-        while (res.size()) {   
-            int x = res.top().second;
-            if(gtset.find(x) != gtset.end()){
-                ++acc;
-            }
-            res.pop();
-        }
-        float recall = (float)acc/k;
-
-        results[i] = {recall, diff};
+        pthread_create(&threads[i], NULL, thread_search, &thread_args[i]);
     }
+
+    for(int i = 0; i < num; i++){
+        pthread_join(threads[i], NULL);
+    }
+    ////
 
     float avg_recall = 0, avg_latency = 0;
     for(int i = 0; i < test_number; ++i) {
@@ -169,7 +204,5 @@ int main(int argc, char *argv[])
     // 浮点误差可能导致一些精确算法平均recall不是1
     std::cout << "average recall: "<<avg_recall / test_number<<"\n";
     std::cout << "average latency (us): "<<avg_latency / test_number<<"\n";
-    free(aligned_base);
-    free(aligned_query);
     return 0;
 }
