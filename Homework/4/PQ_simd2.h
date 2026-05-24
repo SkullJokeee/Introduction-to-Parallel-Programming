@@ -91,16 +91,12 @@ void* thread(void* p){
         }
         pthread_mutex_unlock(&pool->done_lock);
 
-        // if(pool->isStop && pool->tasks.empty()){
-        //     break;
-        // }
-
     }
 
     return NULL;
 }
 
-std::priority_queue<std::pair<float, uint32_t>> pq_adc_search(ThreadPool* pool){    
+std::priority_queue<std::pair<float, uint32_t>> pq_search(ThreadPool* pool){    
     
     std::priority_queue<std::pair<float, uint32_t>> q;
 
@@ -128,11 +124,6 @@ std::priority_queue<std::pair<float, uint32_t>> pq_adc_search(ThreadPool* pool){
     }
     pthread_mutex_unlock(&pool->done_lock);
 
-    // pthread_mutex_lock(&pool.queue_lock);
-    // pool.stop = true;
-    // pthread_cond_broadcast(&pool.queue_cond);
-    // pthread_mutex_unlock(&pool.queue_lock);
-
     std::vector<float> dis(pq_n);
 
     const float* lut0 = pool->lut;
@@ -141,7 +132,6 @@ std::priority_queue<std::pair<float, uint32_t>> pq_adc_search(ThreadPool* pool){
     const float* lut3 = pool->lut + 768;
 
     // 对所有base向量，根据其索引在lut表中找到其对应的类中心和查询向量的距离
-
     for(int i = 0; i < pq_n; i+=4){
         __builtin_prefetch(base_pq + i * 4 + 128, 0, 1);
         const uint8_t* idx1 = base_pq + i * 4;

@@ -4,7 +4,6 @@ import struct
 import os
 
 data_path = "/anndata/"
-output_dir = "files/"
 
 def load_data(path, dtype):
     with open(path, 'rb') as fin:
@@ -17,6 +16,12 @@ def load_data(path, dtype):
         data = np.frombuffer(raw_data, dtype=dtype).reshape(n, d)
 
     return data, n, d
+
+def save(filepath, data, n, d):
+    with open(filepath, 'wb') as f:
+        f.write(struct.pack('I', n))
+        f.write(struct.pack('I', d))
+        f.write(data.tobytes())
 
 def cluster():
     nlist = 1024
@@ -31,7 +36,7 @@ def cluster():
     if t_cb > 0:
         codebook[:t_cb] = codebook[:t_cb].reshape(-1, 4, d).transpose(0, 2, 1).reshape(t_cb, d)
 
-    with open(output_dir + "ivf_codebook.bin", 'wb') as f:
+    with open("files/ivf_codebook.bin", 'wb') as f:
         f.write(struct.pack('I', nlist))
         f.write(struct.pack('I', d))
         f.write(codebook.tobytes())
@@ -62,9 +67,10 @@ def cluster():
         
     offset[nlist] = temp 
 
-    offset.tofile("files/ivf_offset.bin")
-    ivflist.tofile("files/ivf_ivflist.bin")
-    base2.tofile("files/ivf_base.bin")
+    save("files/ivf_offset.bin", offset, nlist + 1, 1)
+    save("files/ivf_ivflist.bin", ivflist, n, 1)    
+    save("files/ivf_base.bin", base2, n, d)
+
 
 if __name__ == "__main__":
     cluster()

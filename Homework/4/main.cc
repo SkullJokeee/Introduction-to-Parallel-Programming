@@ -115,19 +115,18 @@ int main(int argc, char *argv[])
     size_t pq_n = 0, cb_n = 0;
     size_t pq_dim = 0, cb_dim = 0;
 
-    size_t ivf_n = 0, cb2_n = 0;
-    size_t ivf_dim = 0, cb2_dim = 0;
+    size_t ivf_n = base_number, cb2_n = 0;
+    size_t ivf_dim = vecdim, cb2_dim = 0;
 
     auto codebook_pq = LoadData<float>("files/pq_codebook.bin", cb_n, cb_dim);      // 4*256个24维向量
     auto base_pq = LoadData<uint8_t>("files/pq_base.bin", pq_n, pq_dim);    // base_number个4维向量
 
-    auto codebook_ivf = LoadData<float>("files/ivf_codebook.bin", cb2_n, cb2_dim);      // 1024个96维向量
-    // auto list_ivf = LoadIvfData("files/ivf_list.bin");
-    uint32_t* offset_ivf;
-    uint32_t* list_ivf; 
-    float* base_ivf;
-    LoadIvfData("files/", 1024, 100000, 96, offset_ivf, list_ivf, base_ivf);
+    size_t tmp1 = 0, tmp2 = 0;
 
+    auto codebook_ivf = LoadData<float>("files/ivf_codebook.bin", cb2_n, cb2_dim);      // 1024个96维向量
+    uint32_t* offset_ivf = LoadData<uint32_t>("files/ivf_offset.bin", tmp1, tmp2);
+    uint32_t* list_ivf = LoadData<uint32_t>("files/ivf_ivflist.bin", tmp1, tmp2);
+    float* base_ivf = LoadData<float>("files/ivf_base.bin", tmp1, tmp2);
 
     // 查询测试代码
     for(int i = 0; i < test_number; ++i) {

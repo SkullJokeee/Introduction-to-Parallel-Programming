@@ -14,11 +14,63 @@
 // 可以自行添加需要的头文件
 #include "simd.h"
 #include "SQ_simd.h"
-#include "PQ_simd2.h"
 #include <pthread.h>
 #include <queue>
 
 using namespace hnswlib;
+
+size_t test_number = 0, base_number = 0;
+size_t test_gt_d = 0, vecdim = 0;
+size_t pq_n = 0, cb_n = 0;
+size_t pq_dim = 0, cb_dim = 0;
+const size_t k = 10;
+float* test_query;
+int* test_gt;
+float* base;
+float* codebook_pq;
+uint8_t* base_pq;
+size_t cb2_n = 1024;
+size_t cb2_dim = 0;
+size_t ivf_dim = 0;
+uint32_t* offset_ivf;
+uint32_t* list_ivf;
+float* base_ivf;
+float* codebook_ivf;
+
+struct Task{
+    int type;
+    int start;
+    int end;
+    int id;
+};
+
+struct ThreadPool{
+    std::queue<Task> tasks;
+    std::vector<pthread_t> threads;
+    pthread_mutex_t queue_lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_t done_lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
+    pthread_cond_t done_cond = PTHREAD_COND_INITIALIZER;
+
+    float* query;
+    int num = 0;
+    bool isStop = false;
+
+    float* lut = nullptr;
+    float* cb_dis = nullptr;
+    std::vector<std::priority_queue<std::pair<float, uint32_t>>> task_rst;
+
+    float* pq_cb = nullptr;
+    uint8_t* base_pq = nullptr;
+
+    ThreadPool() : threads(8) {}
+};
+
+#include "PQ_simd2.h"
+#include "IVF_simd2.h"
+#include "PQ_IVF_simd2.h"
+#include "IVF_PQ_simd2.h"
+
 
 template<typename T>
 T *LoadData(std::string data_path, size_t& n, size_t& d)
@@ -65,37 +117,6 @@ void build_index(float* base, size_t base_number, size_t vecdim)
     appr_alg->saveIndex(path_index);
 }
 
-size_t test_number = 0, base_number = 0;
-size_t test_gt_d = 0, vecdim = 0;
-size_t pq_n = 0, cb_n = 0;
-size_t pq_dim = 0, cb_dim = 0;
-const size_t k = 10;
-float* test_query;
-int* test_gt;
-float* base;
-float* codebook_pq;
-uint8_t* base_pq;
-
-struct Task{
-    int type;
-    int start;
-    int end;
-};
-
-struct ThreadPool{
-    std::queue<Task> tasks;
-    std::vector<pthread_t> threads(8);
-    pthread_mutex_t queue_lock = PTHREAD_MUTEX_INITIALIZER;
-    pthread_mutex_t done_lock = PTHREAD_MUTEX_INITIALIZER;
-    pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
-    pthread_cond_t done_cond = PTHREAD_COND_INITIALIZER;
-    float* query;
-    float* lut;
-    int num = 0;
-    bool isStop = false;
-};
-
-
 int main(int argc, char *argv[])
 {
     std::string data_path = "/anndata/"; 
@@ -139,11 +160,27 @@ int main(int argc, char *argv[])
     ////////
     SQIndex sq_idx = build_sq_index(base, base_number, vecdim);
 
-    codebook_pq = LoadData<float>("files/pq_codebook.bin", cb_n, cb_dim);      // 4*256个24维向量
-    base_pq = LoadData<uint8_t>("files/pq_base.bin", pq_n, pq_dim);    // base_number个4维向量
+    ivf_n = base_number;
+    cb2_n = 0;
+    ivf_dim = vecdim;
+    cb2_dim = 0;
+
+    codebook_pq = LoadData<float>("files/pq_codebook.bin", cb_n, cb_dim);
+    base_pq = LoadData<uint8_t>("files/pq_base.bin", pq_n, pq_dim);
+
+    size_t tmp1 = 0, tmp2 = 0;
+
+    codebook_ivf = LoadData<float>("files/ivf_codebook.bin", cb2_n, cb2_dim);
+    offset_ivf = LoadData<uint32_t>("files/ivf_offset.bin", tmp1, tmp2);
+    list_ivf   = LoadData<uint32_t>("files/ivf_ivflist.bin", tmp1, tmp2);
+    base_ivf   = LoadData<float>("files/ivf_base.bin", tmp1, tmp2);
 
     ThreadPool pool;
     pool.lut = align<float>(cb_n);
+
+    pool.cb_dis = align<float>(cb2_n); ////
+    pool.task_rst.resize(cb2_n);
+
     for(int i = 0; i < 8; i++){
         pthread_create(&pool.threads[i], NULL, thread, &pool);
     }
@@ -159,7 +196,10 @@ int main(int argc, char *argv[])
         // auto res = flat_search(base, test_query + i*vecdim, base_number, vecdim, k); 
         // auto res = flat_simd_search(base, test_query + i*vecdim, base_number, vecdim, k); 
         // auto res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);
-        auto res = pq_adc_search(&pool);
+        auto res = pq_search(&pool);
+        // auto res = ivf_search(&pool);
+        // auto res = pq_ivf_search(&pool);
+        // auto res = ivf_pq_search(&pool);
         ////////
 
         struct timeval newVal;
@@ -184,6 +224,11 @@ int main(int argc, char *argv[])
 
         results[i] = {recall, diff};
     }
+
+    pthread_mutex_lock(&pool.queue_lock);
+    pool.isStop = true;
+    pthread_cond_broadcast(&pool.queue_cond);
+    pthread_mutex_unlock(&pool.queue_lock);
 
     for(int i = 0; i < 8; i++){
         pthread_join(pool.threads[i], NULL);

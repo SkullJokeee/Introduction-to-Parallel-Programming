@@ -171,6 +171,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_search(const float* base, co
                 rst_q.push({dis, l});
             }
         }
+        
     }
 
     return rst_q;

@@ -6,7 +6,7 @@
 #include "simd.h"
 #include "flat_simd.h"
 
-std::priority_queue<std::pair<float, uint32_t>> pq_adc_search(float* base, float* query, size_t cb_n, size_t pq_n, size_t vecdim, size_t cb_dim, size_t pq_dim, size_t k,const uint8_t* base_pq, const float* codebook_pq){    
+std::priority_queue<std::pair<float, uint32_t>> pq_search(float* base, float* query, size_t cb_n, size_t pq_n, size_t vecdim, size_t cb_dim, size_t pq_dim, size_t k,const uint8_t* base_pq, const float* codebook_pq){    
     
     std::priority_queue<std::pair<float, uint32_t>> q;
 

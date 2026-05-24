@@ -6,7 +6,11 @@
 
 !Homework/
 !Homework/2
+!Homework/3
+!Homework/4
 
 !Homework/**/*.cpp
+!Homework/**/*.cc
 !Homework/**/*.h
+!Homework/**/*.py
 !Homework/**/*.pdf
