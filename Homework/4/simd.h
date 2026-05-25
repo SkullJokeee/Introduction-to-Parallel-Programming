@@ -106,8 +106,8 @@ uint32_t EucDisSIMDNeon(const uint8_t* b1, const uint8_t* b2, size_t vecdim) {
     assert(vecdim % 16 == 0);
     assert(vecdim % 32 == 0);
 
-    b1 = (uint8_t*)__builtin_assume_aligned(b1, 32);
-    b2 = (uint8_t*)__builtin_assume_aligned(b2, 32);
+    // b1 = (uint8_t*)__builtin_assume_aligned(b1, 32);
+    // b2 = (uint8_t*)__builtin_assume_aligned(b2, 32);
 
     uint32x4_t sum1 = vdupq_n_u32(0);
     uint32x4_t sum2 = vdupq_n_u32(0);

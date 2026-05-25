@@ -14,11 +14,96 @@
 // 可以自行添加需要的头文件
 #include "simd.h"
 #include "SQ_simd.h"
-#include "PQ_simd.h"
-#include "IVF_simd.h"
 #include <pthread.h>
+#include <queue>
+
+// #define simd
+#define Pthread
+// #define openMP
+
+#define Query
+
+// #define flat_scan
+// #define flat
+// #define sq
+// #define pq
+// #define ivf
+// #define ivf_pq
+#define pq_ivf
+//////
+
 
 using namespace hnswlib;
+
+size_t test_number = 0, base_number = 0;
+size_t test_gt_d = 0, vecdim = 0;
+size_t pq_n = 0, cb_n = 0;
+size_t pq_dim = 0, cb_dim = 0;
+const size_t k = 10;
+float* test_query;
+int* test_gt;
+float* base;
+float* codebook_pq;
+uint8_t* base_pq;
+size_t cb2_n = 1024;
+size_t cb2_dim = 0;
+size_t ivf_dim = 0;
+uint32_t* offset_ivf;
+uint32_t* list_ivf;
+float* base_ivf;
+float* codebook_ivf;
+
+const size_t nlist = 1024;
+const size_t m = 4;
+const size_t k_pq = 256;
+
+struct Task{
+    int type;
+    int start;
+    int end;
+    int id;
+};
+
+struct ThreadPool{
+    std::queue<Task> tasks;
+    std::vector<pthread_t> threads;
+    pthread_mutex_t queue_lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_t done_lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
+    pthread_cond_t done_cond = PTHREAD_COND_INITIALIZER;
+
+    float* query;
+    int num = 0;
+    bool isStop = false;
+
+    float* lut = nullptr;
+    float* cb_dis = nullptr;
+    std::vector<std::priority_queue<std::pair<float, uint32_t>>> task_rst;
+
+    float* pq_cb = nullptr;
+    uint8_t* base_pq = nullptr;
+
+    ThreadPool() : threads(8) {}
+};
+
+#if defined(simd) || defined(Query)
+    #include "PQ_simd.h"
+    #include "IVF_simd.h"
+    #include "PQ_IVF_simd.h"
+    #include "IVF_PQ_simd.h"
+#endif
+
+#if defined(Pthread) && !defined(Query)
+    #ifdef pq
+        #include "PQ_pthread.h"
+    #elif defined(ivf)
+        #include "IVF_pthread.h"
+    #elif defined(pq_ivf)
+        #include "PQ_IVF_pthread.h"
+    #elif defined(ivf_pq)
+        #include "IVF_PQ_pthread.h"
+    #endif
+#endif
 
 template<typename T>
 T *LoadData(std::string data_path, size_t& n, size_t& d)
@@ -65,16 +150,79 @@ void build_index(float* base, size_t base_number, size_t vecdim)
     appr_alg->saveIndex(path_index);
 }
 
+#if defined(Pthread) && defined(Query)
+
+    struct ThreadArg{
+        int start;
+        int end;
+        std::vector<SearchResult>* results;
+    };
+
+
+    void* thread_search(void* arg) {
+        ThreadArg* args = (ThreadArg*)arg;
+        const unsigned long Converter = 1000 * 1000;
+
+        for(int i = args->start; i < args->end; i++) {
+            struct timeval val;
+            gettimeofday(&val, NULL);
+
+            std::priority_queue<std::pair<float, uint32_t>> res;
+
+            #ifdef flat_scan
+                res = flat_search(base, test_query + i*vecdim, base_number, vecdim, k); 
+            #endif
+            #ifdef flat
+                res = flat_simd_search(base, test_query + i*vecdim, base_number, vecdim, k); 
+            #endif
+            #ifdef sq
+                res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);
+            #endif
+            #ifdef pq
+                res = pq_adc_search(base, test_query + i*vecdim, cb_n, pq_n, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq);
+            #endif
+            #ifdef pq_ivf
+                res = pq_ivf_search(base, test_query + i*vecdim, nlist, base_number, vecdim, m, k_pq, k, codebook_ivf, codebook_pq, offset_ivf, list_ivf, base_pq);
+            #endif
+            #ifdef ivf_pq
+                res = ivf_pq_search(base, test_query + i*vecdim, nlist, base_number, vecdim, m, k_pq, k, codebook_ivf, codebook_pq, offset_ivf, list_ivf, base_pq);
+            #endif
+
+            struct timeval newVal;
+            gettimeofday(&newVal, NULL);
+            int64_t diff = (newVal.tv_sec * Converter + newVal.tv_usec) - (val.tv_sec * Converter + val.tv_usec);
+
+            std::set<uint32_t> gtset;
+            for(int j = 0; j < k; ++j){
+                int r = test_gt[j + i * test_gt_d];
+                gtset.insert(r);
+            }
+
+            size_t acc = 0;
+            while (res.size()) {   
+                int x = res.top().second;
+                if(gtset.find(x) != gtset.end()){
+                    ++acc;
+                }
+                res.pop();
+            }
+            float recall = (float)acc / k;
+
+            (*args->results)[i] = {recall, diff};
+        }
+        return nullptr;
+    }
+
+#endif
+
+
 
 int main(int argc, char *argv[])
 {
-    size_t test_number = 0, base_number = 0;
-    size_t test_gt_d = 0, vecdim = 0;
-
     std::string data_path = "/anndata/"; 
-    auto test_query = LoadData<float>(data_path + "DEEP100K.query.fbin", test_number, vecdim);
-    auto test_gt = LoadData<int>(data_path + "DEEP100K.gt.query.100k.top100.bin", test_number, test_gt_d);
-    auto base = LoadData<float>(data_path + "DEEP100K.base.100k.fbin", base_number, vecdim);
+    test_query = LoadData<float>(data_path + "DEEP100K.query.fbin", test_number, vecdim);
+    test_gt = LoadData<int>(data_path + "DEEP100K.gt.query.100k.top100.bin", test_number, test_gt_d);
+    base = LoadData<float>(data_path + "DEEP100K.base.100k.fbin", base_number, vecdim);
     // 只测试前2000条查询
     test_number = 2000;
 
@@ -96,8 +244,11 @@ int main(int argc, char *argv[])
     base_number = n;
     vecdim = 96;
     ////////
-
-    const size_t k = 10;
+    
+    pq_dim = 4;
+    cb_dim = vecdim / pq_dim;
+    cb2_n = 1024;
+    cb2_dim = vecdim;
 
     std::vector<SearchResult> results;
     results.resize(test_number);
@@ -110,37 +261,123 @@ int main(int argc, char *argv[])
     // build_index(base, base_number, vecdim);
 
     ////////
-    SQIndex sq_idx = build_sq_index(base, base_number, vecdim);
-
-    size_t pq_n = 0, cb_n = 0;
-    size_t pq_dim = 0, cb_dim = 0;
-
-    size_t ivf_n = base_number, cb2_n = 0;
-    size_t ivf_dim = vecdim, cb2_dim = 0;
-
-    auto codebook_pq = LoadData<float>("files/pq_codebook.bin", cb_n, cb_dim);      // 4*256个24维向量
-    auto base_pq = LoadData<uint8_t>("files/pq_base.bin", pq_n, pq_dim);    // base_number个4维向量
 
     size_t tmp1 = 0, tmp2 = 0;
 
-    auto codebook_ivf = LoadData<float>("files/ivf_codebook.bin", cb2_n, cb2_dim);      // 1024个96维向量
-    uint32_t* offset_ivf = LoadData<uint32_t>("files/ivf_offset.bin", tmp1, tmp2);
-    uint32_t* list_ivf = LoadData<uint32_t>("files/ivf_ivflist.bin", tmp1, tmp2);
-    float* base_ivf = LoadData<float>("files/ivf_base.bin", tmp1, tmp2);
+    #ifdef sq
+        SQIndex sq_idx = build_sq_index(base, base_number, vecdim);
+    #endif
 
+    #ifdef ivf
+        ivf_n = base_number;
+        cb2_n = 0;
+        ivf_dim = vecdim;
+        cb2_dim = 0;
+
+        codebook_pq = LoadData<float>("files/pq_codebook.bin", cb_n, cb_dim);
+        base_pq = LoadData<uint8_t>("files/pq_base.bin", pq_n, pq_dim);
+
+        codebook_ivf = LoadData<float>("files/ivf_codebook.bin", cb2_n, cb2_dim);
+        offset_ivf = LoadData<uint32_t>("files/ivf_offset.bin", tmp1, tmp2);
+        list_ivf   = LoadData<uint32_t>("files/ivf_ivflist.bin", tmp1, tmp2);
+        base_ivf   = LoadData<float>("files/ivf_base.bin", tmp1, tmp2);
+    #endif
+
+    ////
+    #ifdef pq_ivf
+        codebook_ivf = LoadData<float>("files/pqivf_ivf_cb.bin", tmp1, tmp2);
+        codebook_pq  = LoadData<float>("files/pqivf_pq_cb.bin", tmp1, tmp2);
+        offset_ivf   = LoadData<uint32_t>("files/pqivf_offset.bin", tmp1, tmp2);
+        list_ivf     = LoadData<uint32_t>("files/pqivf_list.bin", tmp1, tmp2);
+        base_pq      = LoadData<uint8_t>("files/pqivf_base.bin", tmp1, tmp2);
+    #endif
+    
+    #ifdef ivf_pq
+        codebook_ivf = LoadData<float>("files/ivfpq_ivf_cb.bin", tmp1, tmp2);
+        codebook_pq  = LoadData<float>("files/ivfpq_pq_cb.bin", tmp1, tmp2);
+        offset_ivf   = LoadData<uint32_t>("files/ivfpq_offset.bin", tmp1, tmp2);
+        list_ivf     = LoadData<uint32_t>("files/ivfpq_list.bin", tmp1, tmp2);
+        base_pq      = LoadData<uint8_t>("files/ivfpq_base.bin", tmp1, tmp2);
+    #endif
+
+    ////
+
+    // #ifdef Pthread
+    #if defined(Pthread) && !defined(Query)
+        ThreadPool pool;
+        cb_n = m * k_pq;
+        pool.lut = align<float>(cb_n);
+
+        pool.cb_dis = align<float>(cb2_n); ////
+        pool.task_rst.resize(cb2_n);
+
+        pool.pq_cb = codebook_pq; 
+        pool.base_pq = base_pq;
+        
+        for(int i = 0; i < 8; i++){
+            pthread_create(&pool.threads[i], NULL, thread, &pool);
+        }
+
+    #endif
+
+    #if defined(Pthread) && defined(Query)
+
+        int num = 8;
+        std::vector<pthread_t> threads(num);
+        std::vector<ThreadArg> thread_args(num);
+        
+        int size = test_number / num;  // 2000 / 8
+
+        for(int i = 0; i < num; i++){
+            thread_args[i].start = i * size;
+            thread_args[i].end = (i + 1) * size;
+            thread_args[i].results = &results;
+            // thread_args[i].test_gt = test_gt;
+
+            pthread_create(&threads[i], NULL, thread_search, &thread_args[i]);
+        }
+
+        for(int i = 0; i < num; i++){
+            pthread_join(threads[i], NULL);
+        }
+
+    #endif
+        
     // 查询测试代码
+    #ifndef Query
     for(int i = 0; i < test_number; ++i) {
+        pool.query = test_query + i*vecdim;
         const unsigned long Converter = 1000 * 1000;
         struct timeval val;
         int ret = gettimeofday(&val, NULL);
 
-        // 该文件已有代码中你只能修改该函数的调用方式
-        // 可以任意修改函数名，函数参数或者改为调用成员函数，但是不能修改函数返回值。
-        // auto res = flat_search(base, test_query + i*vecdim, base_number, vecdim, k); 
-        // auto res = flat_simd_search(base, test_query + i*vecdim, base_number, vecdim, k); 
-        // auto res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);
-        // auto res = pq_adc_search(base, test_query + i*vecdim, cb_n, base_number, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq);
-        auto res = ivf_search(base, test_query + i*vecdim, cb2_n, base_number, cb2_dim, ivf_dim, k, base_ivf, codebook_ivf, list_ivf, offset_ivf); 
+        #ifdef flat_scan
+            auto res = flat_search(base, test_query + i*vecdim, base_number, vecdim, k); 
+        #endif
+
+        #ifdef flat
+            auto res = flat_simd_search(base, test_query + i*vecdim, base_number, vecdim, k); 
+        #endif
+
+        #ifdef sq
+            auto res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);
+        #endif
+
+        #ifdef pq
+            auto res = pq_search(&pool);
+        #endif
+
+        #ifdef ivf
+            auto res = ivf_search(&pool);
+        #endif
+
+        #ifdef pq_ivf
+        auto res = pq_ivf_search(&pool);
+        #endif
+        
+        #ifdef ivf_pq
+        auto res = ivf_pq_search(&pool);
+        #endif
         ////////
 
         struct timeval newVal;
@@ -165,6 +402,19 @@ int main(int argc, char *argv[])
 
         results[i] = {recall, diff};
     }
+    #endif
+
+
+    #if defined(Pthread) && !defined(Query)
+        pthread_mutex_lock(&pool.queue_lock);
+        pool.isStop = true;
+        pthread_cond_broadcast(&pool.queue_cond);
+        pthread_mutex_unlock(&pool.queue_lock);
+
+        for(int i = 0; i < 8; i++){
+            pthread_join(pool.threads[i], NULL);
+        }
+    #endif
 
     float avg_recall = 0, avg_latency = 0;
     for(int i = 0; i < test_number; ++i) {

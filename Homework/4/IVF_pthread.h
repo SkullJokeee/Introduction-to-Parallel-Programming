@@ -204,10 +204,14 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_search(ThreadPool* pool){
         t.start = i * size;
         t.end = (i + 1) * size;
 
-        pthread_mutex_lock(&pool->queue_lock);
+        pthread_mutex_lock(&pool->done_lock); ////
         pool->num += 1;
+        pthread_mutex_unlock(&pool->done_lock);
+
+        pthread_mutex_lock(&pool->queue_lock);
         pool->tasks.push(t);
         pthread_cond_signal(&pool->queue_cond);
+
         pthread_mutex_unlock(&pool->queue_lock);
 
     }
@@ -244,8 +248,11 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_search(ThreadPool* pool){
         t.end = offset_ivf[idx + 1];
         t.id = task_id++;
 
-        pthread_mutex_lock(&pool->queue_lock);
+        pthread_mutex_lock(&pool->done_lock);
         pool->num += 1;
+        pthread_mutex_unlock(&pool->done_lock);
+
+        pthread_mutex_lock(&pool->queue_lock);
         pool->tasks.push(t);
         pthread_cond_signal(&pool->queue_cond);
         pthread_mutex_unlock(&pool->queue_lock);
