@@ -19,7 +19,7 @@ def save(filepath, data, n, d):
         f.write(data.tobytes())
 
 def cluster():
-    nlist = 1024
+    nlist = 128
     m = 4
     k = 256
     data, n, d = load_data(data_path + "DEEP100K.base.100k.fbin", np.float32)

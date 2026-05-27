@@ -30,26 +30,7 @@ extern uint32_t* list_ivf;
 extern float* base_ivf;
 extern float* codebook_ivf;
 
-void LoadIvfData(std::string path, size_t nlist, size_t n, size_t d, uint32_t*& offset, uint32_t*& ivflist, float*& base){
-    std::ifstream fin;
-
-    fin.open(path + "ivf_offset.bin", std::ios::in | std::ios::binary);
-    offset = new uint32_t[nlist + 1];
-    fin.read((char*)offset, (nlist + 1) * sizeof(uint32_t));
-    fin.close();
-
-    fin.open(path + "ivf_ivflist.bin", std::ios::in | std::ios::binary);
-    ivflist = new uint32_t[n];
-    fin.read((char*)ivflist, n * sizeof(uint32_t));
-    fin.close();
-
-    fin.open(path + "ivf_base.bin", std::ios::in | std::ios::binary);
-    base = new float[n * d];
-    fin.read((char*)base, n * d * sizeof(float));
-    fin.close();
-}
-
-void* ivf_thread(void* p){
+void* thread(void* p){
     ThreadPool* pool = (ThreadPool*)p;
     while(1){
         Task t;

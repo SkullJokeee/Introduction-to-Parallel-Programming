@@ -10,7 +10,7 @@
 
 std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(float* base, float* query, size_t nlist, size_t n, size_t vecdim, size_t m, size_t k_pq, size_t top_k, const float* ivf_cb, const float* pq_cbs, const uint32_t* offset, const uint32_t* lst, const uint8_t* base_pq) {
     
-    size_t nprobe = 20;
+    size_t nprobe = 10;
     nprobe = std::min(nprobe, nlist);
     size_t sub_d = vecdim / m;
 
@@ -60,7 +60,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(float* base, float
         }
     }
 
-    size_t p = 4000;
+    size_t p = 200;
     p = std::max(p, top_k);
     std::priority_queue<std::pair<float, uint32_t>> q_pq;
     

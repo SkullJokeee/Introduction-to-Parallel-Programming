@@ -42,11 +42,10 @@ void* thread(void* p){
         pool->tasks.pop();
         pthread_mutex_unlock(&pool->queue_lock);
         
-        // if(t.type == 0){ // 构建lut
         for(int j = 0; j < pq_dim; j++){
             const float* segment = pool->query + j * cb_dim;
             
-            for(int i = t.start; i < t.end; i += 4){ // 类中心集合并行
+            for(int i = t.start; i < t.end; i += 4){
                 float32x4_t sum1 = vdupq_n_f32(0.0f);
                 float32x4_t sum2 = vdupq_n_f32(0.0f);
                 float32x4_t sum3 = vdupq_n_f32(0.0f);

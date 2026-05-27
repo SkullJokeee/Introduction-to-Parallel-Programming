@@ -18,18 +18,18 @@
 #include <queue>
 
 // #define simd
-#define Pthread
-// #define openMP
+// #define Pthread
+#define openMP
 
-#define Query
+// #define Query
 
 // #define flat_scan
 // #define flat
 // #define sq
-// #define pq
+#define pq
 // #define ivf
+// #define pq_ivf
 // #define ivf_pq
-#define pq_ivf
 //////
 
 
@@ -45,7 +45,8 @@ int* test_gt;
 float* base;
 float* codebook_pq;
 uint8_t* base_pq;
-size_t cb2_n = 1024;
+size_t ivf_n = 0;
+size_t cb2_n = 128; ////
 size_t cb2_dim = 0;
 size_t ivf_dim = 0;
 uint32_t* offset_ivf;
@@ -53,7 +54,7 @@ uint32_t* list_ivf;
 float* base_ivf;
 float* codebook_ivf;
 
-const size_t nlist = 1024;
+const size_t nlist = 128; ////
 const size_t m = 4;
 const size_t k_pq = 256;
 
@@ -84,6 +85,11 @@ struct ThreadPool{
     uint8_t* base_pq = nullptr;
 
     ThreadPool() : threads(8) {}
+
+    ~ThreadPool() {
+        free(lut);
+        free(cb_dis);
+    }
 };
 
 #if defined(simd) || defined(Query)
@@ -102,6 +108,18 @@ struct ThreadPool{
         #include "PQ_IVF_pthread.h"
     #elif defined(ivf_pq)
         #include "IVF_PQ_pthread.h"
+    #endif
+#endif
+
+#if defined(openMP) && !defined(Query)
+    #ifdef pq
+        #include "PQ_openMP.h"
+    #elif defined(ivf)
+        #include "IVF_openMP.h"
+    #elif defined(pq_ivf)
+        #include "PQ_IVF_openMP.h"
+    #elif defined(ivf_pq)
+        #include "IVF_PQ_openMP.h"
     #endif
 #endif
 
@@ -151,13 +169,11 @@ void build_index(float* base, size_t base_number, size_t vecdim)
 }
 
 #if defined(Pthread) && defined(Query)
-
     struct ThreadArg{
         int start;
         int end;
         std::vector<SearchResult>* results;
     };
-
 
     void* thread_search(void* arg) {
         ThreadArg* args = (ThreadArg*)arg;
@@ -179,7 +195,10 @@ void build_index(float* base, size_t base_number, size_t vecdim)
                 res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);
             #endif
             #ifdef pq
-                res = pq_adc_search(base, test_query + i*vecdim, cb_n, pq_n, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq);
+                res = pq_search(base, test_query + i*vecdim, cb_n, pq_n, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq);
+            #endif
+            #ifdef ivf
+                res = ivf_search(base, test_query + i*vecdim, cb2_n, base_number, cb2_dim, ivf_dim, k, base_ivf, codebook_ivf, list_ivf, offset_ivf);
             #endif
             #ifdef pq_ivf
                 res = pq_ivf_search(base, test_query + i*vecdim, nlist, base_number, vecdim, m, k_pq, k, codebook_ivf, codebook_pq, offset_ivf, list_ivf, base_pq);
@@ -219,35 +238,16 @@ void build_index(float* base, size_t base_number, size_t vecdim)
 
 int main(int argc, char *argv[])
 {
-    std::string data_path = "/anndata/"; 
+    std::string data_path = "anndata/"; //// 本地
     test_query = LoadData<float>(data_path + "DEEP100K.query.fbin", test_number, vecdim);
     test_gt = LoadData<int>(data_path + "DEEP100K.gt.query.100k.top100.bin", test_number, test_gt_d);
     base = LoadData<float>(data_path + "DEEP100K.base.100k.fbin", base_number, vecdim);
     // 只测试前2000条查询
     test_number = 2000;
-
-    /////////
-    size_t n = 100000, d = 96;
-    float* mock_test = new float[test_number * d];
-    int* mock_test_gt = new int[test_number * d];
-    float* mock_base = new float[n * d];
-    for(size_t i = 0; i < test_number * d; ++i){
-        mock_test[i] = (float)rand() / RAND_MAX;
-        mock_test_gt[i] = rand() % n;
-    }
-    for(size_t i = 0; i < n * d; ++i){
-        mock_base[i] = (float)rand() / RAND_MAX;
-    }
-    test_query = mock_test;
-    test_gt = mock_test_gt;
-    base = mock_base;
-    base_number = n;
-    vecdim = 96;
-    ////////
     
     pq_dim = 4;
     cb_dim = vecdim / pq_dim;
-    cb2_n = 1024;
+    cb2_n = 128;
     cb2_dim = vecdim;
 
     std::vector<SearchResult> results;
@@ -268,14 +268,16 @@ int main(int argc, char *argv[])
         SQIndex sq_idx = build_sq_index(base, base_number, vecdim);
     #endif
 
+    #ifdef pq
+        codebook_pq = LoadData<float>("files/pq_codebook.bin", cb_n, cb_dim);
+        base_pq = LoadData<uint8_t>("files/pq_base.bin", pq_n, pq_dim);
+    #endif
+
     #ifdef ivf
         ivf_n = base_number;
         cb2_n = 0;
         ivf_dim = vecdim;
         cb2_dim = 0;
-
-        codebook_pq = LoadData<float>("files/pq_codebook.bin", cb_n, cb_dim);
-        base_pq = LoadData<uint8_t>("files/pq_base.bin", pq_n, pq_dim);
 
         codebook_ivf = LoadData<float>("files/ivf_codebook.bin", cb2_n, cb2_dim);
         offset_ivf = LoadData<uint32_t>("files/ivf_offset.bin", tmp1, tmp2);
@@ -302,13 +304,16 @@ int main(int argc, char *argv[])
 
     ////
 
+    struct timeval total_start_time; ////
+    gettimeofday(&total_start_time, NULL);
+
     // #ifdef Pthread
     #if defined(Pthread) && !defined(Query)
         ThreadPool pool;
         cb_n = m * k_pq;
         pool.lut = align<float>(cb_n);
 
-        pool.cb_dis = align<float>(cb2_n); ////
+        pool.cb_dis = align<float>(cb2_n);
         pool.task_rst.resize(cb2_n);
 
         pool.pq_cb = codebook_pq; 
@@ -345,38 +350,66 @@ int main(int argc, char *argv[])
         
     // 查询测试代码
     #ifndef Query
+    #if defined(openMP)
+        #pragma omp parallel for
+    #endif
     for(int i = 0; i < test_number; ++i) {
+        #ifdef Pthread
         pool.query = test_query + i*vecdim;
+        #endif
+
         const unsigned long Converter = 1000 * 1000;
         struct timeval val;
         int ret = gettimeofday(&val, NULL);
 
+        std::priority_queue<std::pair<float, uint32_t>> res;
+
         #ifdef flat_scan
-            auto res = flat_search(base, test_query + i*vecdim, base_number, vecdim, k); 
+            res = flat_search(base, test_query + i*vecdim, base_number, vecdim, k); 
         #endif
 
         #ifdef flat
-            auto res = flat_simd_search(base, test_query + i*vecdim, base_number, vecdim, k); 
+            res = flat_simd_search(base, test_query + i*vecdim, base_number, vecdim, k); 
         #endif
 
         #ifdef sq
-            auto res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);
+            res = sq_search(base, test_query + i*vecdim, base_number, vecdim, k, sq_idx);
         #endif
 
         #ifdef pq
-            auto res = pq_search(&pool);
+            #if defined(simd) || defined(openMP)
+                res = pq_search(base, test_query + i*vecdim, cb_n, base_number, vecdim, cb_dim, pq_dim, k, base_pq, codebook_pq);
+            #endif
+            #ifdef Pthread
+                res = pq_search(&pool);
+            #endif
         #endif
 
         #ifdef ivf
-            auto res = ivf_search(&pool);
+            #if defined(simd) || defined(openMP)
+                res = ivf_search(base, test_query + i*vecdim, cb2_n, base_number, cb2_dim, ivf_dim, k, base_ivf, codebook_ivf, list_ivf, offset_ivf); 
+            #endif
+            #ifdef Pthread
+                res = ivf_search(&pool);
+            #endif
         #endif
 
         #ifdef pq_ivf
-        auto res = pq_ivf_search(&pool);
+            #if defined(simd) || defined(openMP)
+                res = pq_ivf_search(base, test_query + i*vecdim, cb2_n, base_number, vecdim, m, k_pq, k, codebook_ivf, codebook_pq, offset_ivf, list_ivf, base_pq);
+            #endif
+            #ifdef Pthread
+                res = pq_ivf_search(&pool);
+            #endif
         #endif
         
         #ifdef ivf_pq
-        auto res = ivf_pq_search(&pool);
+            #if defined(simd) || defined(openMP)
+                res = ivf_pq_search(base, test_query + i*vecdim, cb2_n, base_number, vecdim, m, k_pq, k, codebook_ivf, codebook_pq, offset_ivf, list_ivf, base_pq);
+            #endif
+            #ifdef Pthread
+                res = ivf_pq_search(&pool);
+            #endif
         #endif
         ////////
 
@@ -416,14 +449,45 @@ int main(int argc, char *argv[])
         }
     #endif
 
+    struct timeval total_end_time; ////
+    gettimeofday(&total_end_time, NULL);
+    
+    const unsigned long Converter = 1000 * 1000;
+    int64_t total_latency = (total_end_time.tv_sec * Converter + total_end_time.tv_usec) - (total_start_time.tv_sec * Converter + total_start_time.tv_usec);
+
     float avg_recall = 0, avg_latency = 0;
     for(int i = 0; i < test_number; ++i) {
         avg_recall += results[i].recall;
         avg_latency += results[i].latency;
     }
 
+    #ifdef pq
+        delete[] codebook_pq;
+        delete[] base_pq;
+    #endif
+
+    #ifdef ivf
+        delete[] codebook_ivf;
+        delete[] offset_ivf;
+        delete[] list_ivf;
+        delete[] base_ivf;
+    #endif
+
+    #if defined(pq_ivf) || defined(ivf_pq)
+        delete[] codebook_ivf;
+        delete[] codebook_pq;
+        delete[] offset_ivf;
+        delete[] list_ivf;
+        delete[] base_pq;
+    #endif
+
     // 浮点误差可能导致一些精确算法平均recall不是1
-    std::cout << "average recall: "<<avg_recall / test_number<<"\n";
-    std::cout << "average latency (us): "<<avg_latency / test_number<<"\n";
+    std::cout << "average recall: " << avg_recall / test_number << "\n";
+    // 原始指标：单条查询的平均延迟 (Latency)
+    std::cout << "average single query latency (us): " << avg_latency / test_number << "\n";
+
+    std::cout << "total time for all queries (us): " << total_latency << "\n"; ////
+    std::cout << "average time per query (us): " << total_latency / test_number << "\n";
+
     return 0;
 }

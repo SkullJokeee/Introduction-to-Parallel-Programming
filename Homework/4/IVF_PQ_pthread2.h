@@ -33,11 +33,6 @@ struct ThreadPool;
 void* thread(void* p){
     ThreadPool* pool = (ThreadPool*)p;
 
-    size_t sub_d = cb_dim;
-    size_t k_pq = 256;
-    size_t m = pq_dim;
-    float* lut = (float*)aligned_alloc(16, m * k_pq * sizeof(float));
-
     while(1){
         Task t;
 
@@ -45,7 +40,6 @@ void* thread(void* p){
         while(pool->tasks.empty()){
 
             if(pool->isStop){
-                free(lut);
                 pthread_mutex_unlock(&pool->queue_lock);
                 return NULL;
             }
@@ -97,98 +91,6 @@ void* thread(void* p){
                 pool->cb_dis[i + 2] = 1.0f - dis_array[2];
                 pool->cb_dis[i + 3] = 1.0f - dis_array[3];
             }
-        }
-        else if(t.type == 1){
-            std::priority_queue<std::pair<float, uint32_t>> temp_q;
-            uint32_t start = t.start;
-            uint32_t end = t.end;
-            uint32_t cluster_idx = t.id;
-            uint32_t last = start + ((end - start) / 4) * 4;
-
-            const float* pq_cbs = pool->pq_cb;
-
-            for(int j = 0; j < m; j++){
-                const float* segment = pool->query + j * sub_d;
-
-                for(int i = 0; i < k_pq; i += 4){
-
-                    float32x4_t sum1 = vdupq_n_f32(0.0f);
-                    float32x4_t sum2 = vdupq_n_f32(0.0f);
-                    float32x4_t sum3 = vdupq_n_f32(0.0f);
-                    float32x4_t sum4 = vdupq_n_f32(0.0f);
-
-                    const float* c1 = pq_cbs + (cluster_idx * m * k_pq * sub_d) + (j * k_pq + i) * sub_d;
-                    const float* c2 = pq_cbs + (cluster_idx * m * k_pq * sub_d) + (j * k_pq + i + 1) * sub_d;
-                    const float* c3 = pq_cbs + (cluster_idx * m * k_pq * sub_d) + (j * k_pq + i + 2) * sub_d;
-                    const float* c4 = pq_cbs + (cluster_idx * m * k_pq * sub_d) + (j * k_pq + i + 3) * sub_d;
-
-                    for(int d = 0; d < sub_d; d += 4){
-
-                        float32x4_t q_vec = vld1q_f32(segment + d);
-                        float32x4_t c1_vec = vld1q_f32(c1 + d);
-                        float32x4_t c2_vec = vld1q_f32(c2 + d);
-                        float32x4_t c3_vec = vld1q_f32(c3 + d);
-                        float32x4_t c4_vec = vld1q_f32(c4 + d);
-
-                        sum1 = vmlaq_f32(sum1, q_vec, c1_vec);
-                        sum2 = vmlaq_f32(sum2, q_vec, c2_vec);
-                        sum3 = vmlaq_f32(sum3, q_vec, c3_vec);
-                        sum4 = vmlaq_f32(sum4, q_vec, c4_vec);
-
-                    }
-
-                    float d1 = vaddvq_f32(sum1);
-                    float d2 = vaddvq_f32(sum2);
-                    float d3 = vaddvq_f32(sum3);
-                    float d4 = vaddvq_f32(sum4);
-
-                    lut[j * k_pq + i] = 1.0f - d1;
-                    lut[j * k_pq + i + 1] = 1.0f - d2;
-                    lut[j * k_pq + i + 2] = 1.0f - d3;
-                    lut[j * k_pq + i + 3] = 1.0f - d4;
-                }
-
-            }
-
-            const float* lut0 = lut;
-            const float* lut1 = lut + k_pq;
-            const float* lut2 = lut + 2 * k_pq;
-            const float* lut3 = lut + 3 * k_pq;
-
-            size_t p = 200; ////
-            p = std::max(p, k);
-
-            for(int i = start; i < last; i++){
-                const uint8_t* idx = pool->base_pq + i * m;
-
-                float d = lut0[idx[0]] + lut1[idx[1]] + lut2[idx[2]] + lut3[idx[3]];
-                uint32_t id = list_ivf[i];
-
-                if(temp_q.size() < p){
-                    temp_q.push({d, id});
-                }
-                else if(d < temp_q.top().first){
-                    temp_q.pop();
-                    temp_q.push({d, id});
-                }
-            }
-
-            for(int i = last; i < end; i++){
-
-                const uint8_t* idx = pool->base_pq + i * m;
-                float d = lut0[idx[0]] + lut1[idx[1]] + lut2[idx[2]] + lut3[idx[3]];
-                uint32_t id = list_ivf[i];
-
-                if(temp_q.size() < p){
-                    temp_q.push({d, id});
-                }
-                else if(d < temp_q.top().first){
-                    temp_q.pop();
-                    temp_q.push({d, id});
-                }
-            }
-
-            pool->task_rst[cluster_idx] = temp_q;
         }
 
         pthread_mutex_lock(&pool->done_lock);
@@ -246,51 +148,105 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(ThreadPool* pool){
 
     std::priority_queue<std::pair<float, uint32_t>> rst_q;
 
+    size_t p = 200; 
+    p = std::max(p, k);
+    std::priority_queue<std::pair<float, uint32_t>> global_r;
+
+    size_t sub_d = cb_dim;
+    size_t k_pq = 256;
+    size_t m = pq_dim;
+    float* lut = (float*)aligned_alloc(16, m * k_pq * sizeof(float));
+
     while(!q.empty()){
         uint32_t cluster_idx = q.top().second;
         q.pop();
 
-        Task t;
-        t.type = 1;
-        t.start = offset_ivf[cluster_idx];
-        t.end = offset_ivf[cluster_idx + 1];
-        t.id = cluster_idx;
+        uint32_t start = offset_ivf[cluster_idx];
+        uint32_t end = offset_ivf[cluster_idx + 1];
+        uint32_t last = start + ((end - start) / 4) * 4;
 
-        pthread_mutex_lock(&pool->done_lock);
-        pool->num += 1;
-        pthread_mutex_unlock(&pool->done_lock);
+        const float* pq_cbs = pool->pq_cb;
 
-        pthread_mutex_lock(&pool->queue_lock);
-        pool->tasks.push(t);
-        pthread_cond_signal(&pool->queue_cond);
-        pthread_mutex_unlock(&pool->queue_lock);
-    }
+        for(int j = 0; j < m; j++){
+            const float* segment = pool->query + j * sub_d;
 
-    pthread_mutex_lock(&pool->done_lock);
-    while(pool->num > 0){
-        pthread_cond_wait(&pool->done_cond, &pool->done_lock);
-    }
-    pthread_mutex_unlock(&pool->done_lock);
+            for(int i = 0; i < k_pq; i += 4){
 
-    size_t p = 200; ////
-    p = std::max(p, k);
-    std::priority_queue<std::pair<float, uint32_t>> global_r;
+                float32x4_t sum1 = vdupq_n_f32(0.0f);
+                float32x4_t sum2 = vdupq_n_f32(0.0f);
+                float32x4_t sum3 = vdupq_n_f32(0.0f);
+                float32x4_t sum4 = vdupq_n_f32(0.0f);
 
-    for(int i = 0; i < cb2_n; i++){
-        auto& temp_q = pool->task_rst[i]; 
-        while(!temp_q.empty()){
-            auto pr = temp_q.top();
-            temp_q.pop();
+                const float* c1 = pq_cbs + (cluster_idx * m * k_pq * sub_d) + (j * k_pq + i) * sub_d;
+                const float* c2 = pq_cbs + (cluster_idx * m * k_pq * sub_d) + (j * k_pq + i + 1) * sub_d;
+                const float* c3 = pq_cbs + (cluster_idx * m * k_pq * sub_d) + (j * k_pq + i + 2) * sub_d;
+                const float* c4 = pq_cbs + (cluster_idx * m * k_pq * sub_d) + (j * k_pq + i + 3) * sub_d;
+
+                for(int d = 0; d < sub_d; d += 4){
+
+                    float32x4_t q_vec = vld1q_f32(segment + d);
+                    float32x4_t c1_vec = vld1q_f32(c1 + d);
+                    float32x4_t c2_vec = vld1q_f32(c2 + d);
+                    float32x4_t c3_vec = vld1q_f32(c3 + d);
+                    float32x4_t c4_vec = vld1q_f32(c4 + d);
+
+                    sum1 = vmlaq_f32(sum1, q_vec, c1_vec);
+                    sum2 = vmlaq_f32(sum2, q_vec, c2_vec);
+                    sum3 = vmlaq_f32(sum3, q_vec, c3_vec);
+                    sum4 = vmlaq_f32(sum4, q_vec, c4_vec);
+
+                }
+
+                float d1 = vaddvq_f32(sum1);
+                float d2 = vaddvq_f32(sum2);
+                float d3 = vaddvq_f32(sum3);
+                float d4 = vaddvq_f32(sum4);
+
+                lut[j * k_pq + i] = 1.0f - d1;
+                lut[j * k_pq + i + 1] = 1.0f - d2;
+                lut[j * k_pq + i + 2] = 1.0f - d3;
+                lut[j * k_pq + i + 3] = 1.0f - d4;
+            }
+
+        }
+
+        const float* lut0 = lut;
+        const float* lut1 = lut + k_pq;
+        const float* lut2 = lut + 2 * k_pq;
+        const float* lut3 = lut + 3 * k_pq;
+
+        for(int i = start; i < last; i++){
+            const uint8_t* idx = pool->base_pq + i * m;
+
+            float d = lut0[idx[0]] + lut1[idx[1]] + lut2[idx[2]] + lut3[idx[3]];
+            uint32_t id = list_ivf[i];
 
             if(global_r.size() < p){
-                global_r.push(pr);
+                global_r.push({d, id});
             }
-            else if(pr.first < global_r.top().first){
+            else if(d < global_r.top().first){
                 global_r.pop();
-                global_r.push(pr);
+                global_r.push({d, id});
+            }
+        }
+
+        for(int i = last; i < end; i++){
+
+            const uint8_t* idx = pool->base_pq + i * m;
+            float d = lut0[idx[0]] + lut1[idx[1]] + lut2[idx[2]] + lut3[idx[3]];
+            uint32_t id = list_ivf[i];
+
+            if(global_r.size() < p){
+                global_r.push({d, id});
+            }
+            else if(d < global_r.top().first){
+                global_r.pop();
+                global_r.push({d, id});
             }
         }
     }
+
+    free(lut);
 
     while(!global_r.empty()){
         uint32_t actual_id = global_r.top().second;

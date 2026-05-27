@@ -104,7 +104,7 @@ std::priority_queue<std::pair<float, uint32_t>> pq_ivf_search(float* base, float
     const float* lut2 = lut + 2 * k_pq;
     const float* lut3 = lut + 3 * k_pq;
 
-    size_t p = 4000;
+    size_t p = 1000;
     p = std::max(p, top_k);
     std::priority_queue<std::pair<float, uint32_t>> q_pq;
 
@@ -118,14 +118,14 @@ std::priority_queue<std::pair<float, uint32_t>> pq_ivf_search(float* base, float
         for(uint32_t i = start; i < end; i++){
             const uint8_t* idx = base_pq + i * m;
             float d = lut0[idx[0]] + lut1[idx[1]] + lut2[idx[2]] + lut3[idx[3]];
-            uint32_t actual_id = lst[i];
+            uint32_t id = lst[i];
 
             if(q_pq.size() < p) {
-                q_pq.push({d, actual_id});
+                q_pq.push({d, id});
             }
             else if(d < q_pq.top().first) {
                 q_pq.pop();
-                q_pq.push({d, actual_id});
+                q_pq.push({d, id});
             }
         }
     }
