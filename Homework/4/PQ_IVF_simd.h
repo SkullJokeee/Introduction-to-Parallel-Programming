@@ -48,15 +48,41 @@ std::priority_queue<std::pair<float, uint32_t>> pq_ivf_search(float* base, float
         float dis_array[4];
         vst1q_f32(dis_array, sum);
 
-        for (int j = 0; j < 4; ++j) {
-            float d_val = 1.0f - dis_array[j];
-            if(q_ivf.size() < nprobe){
-                q_ivf.push({d_val, i + j});
-            } 
-            else if(d_val < q_ivf.top().first){
-                q_ivf.pop(); 
-                q_ivf.push({d_val, i + j}); 
-            }
+        float d1 = 1.0f - dis_array[0];
+        float d2 = 1.0f - dis_array[1];
+        float d3 = 1.0f - dis_array[2];
+        float d4 = 1.0f - dis_array[3];
+
+        if(q_ivf.size() < nprobe){
+            q_ivf.push({d1, i});
+        } 
+        else if(d1 < q_ivf.top().first){
+            q_ivf.pop(); 
+            q_ivf.push({d1, i}); 
+        }
+        
+        if(q_ivf.size() < nprobe){
+            q_ivf.push({d2, i+1});
+        } 
+        else if(d2 < q_ivf.top().first){
+            q_ivf.pop(); 
+            q_ivf.push({d2, i+1}); 
+        }
+        
+        if(q_ivf.size() < nprobe){
+            q_ivf.push({d3, i+2});
+        } 
+        else if(d3 < q_ivf.top().first){
+            q_ivf.pop(); 
+            q_ivf.push({d3, i+2}); 
+        }
+        
+        if(q_ivf.size() < nprobe){
+            q_ivf.push({d4, i+3});
+        } 
+        else if(d4 < q_ivf.top().first){
+            q_ivf.pop(); 
+            q_ivf.push({d4, i+3}); 
         }
     }
 
@@ -104,7 +130,7 @@ std::priority_queue<std::pair<float, uint32_t>> pq_ivf_search(float* base, float
     const float* lut2 = lut + 2 * k_pq;
     const float* lut3 = lut + 3 * k_pq;
 
-    size_t p = 1000;
+    size_t p = 500;
     p = std::max(p, top_k);
     std::priority_queue<std::pair<float, uint32_t>> q_pq;
 

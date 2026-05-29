@@ -9,25 +9,6 @@
 #include <fstream>
 #include <cstdint>
 
-void LoadIvfData(std::string path, size_t nlist, size_t n, size_t d, uint32_t*& offset, uint32_t*& ivflist, float*& base){
-    std::ifstream fin;
-
-    fin.open(path + "ivf_offset.bin", std::ios::in | std::ios::binary);
-    offset = new uint32_t[nlist + 1];
-    fin.read((char*)offset, (nlist + 1) * sizeof(uint32_t));
-    fin.close();
-
-    fin.open(path + "ivf_ivflist.bin", std::ios::in | std::ios::binary);
-    ivflist = new uint32_t[n];
-    fin.read((char*)ivflist, n * sizeof(uint32_t));
-    fin.close();
-
-    fin.open(path + "ivf_base.bin", std::ios::in | std::ios::binary);
-    base = new float[n * d];
-    fin.read((char*)base, n * d * sizeof(float));
-    fin.close();
-}
-
 std::priority_queue<std::pair<float, uint32_t>> ivf_search(const float* base, const float* query, size_t cb_n, size_t ivf_n, size_t cb_dim, size_t ivf_dim, size_t k, const float* base_ivf, const float* codebook_ivf, const uint32_t* list_ivf, const uint32_t* offset_ivf){    
     size_t nprobe = 20;
     nprobe = std::min(nprobe, cb_n);
@@ -47,7 +28,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_search(const float* base, co
         
         const float* block = codebook_ivf + i * cb_dim;
 
-    for(int d = 0; d < cb_dim; d += 4){
+        for(int d = 0; d < cb_dim; d += 4){
             float32x4_t c_vec1 = vld1q_f32(block + d * 4);
             float32x4_t c_vec2 = vld1q_f32(block + (d+1) * 4);
             float32x4_t c_vec3 = vld1q_f32(block + (d+2) * 4);

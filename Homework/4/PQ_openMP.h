@@ -14,7 +14,7 @@ std::priority_queue<std::pair<float, uint32_t>> pq_search(float* base, float* qu
     
     float* lut = align<float>(cb_n);
     
-    
+    // 计算查询向量到PQ码本的距离，生成查找表lut
     for(int j=0; j<pq_dim; ++j){
         const float* segment = query + j * cb_dim;
     
@@ -55,10 +55,9 @@ std::priority_queue<std::pair<float, uint32_t>> pq_search(float* base, float* qu
     
     std::priority_queue<std::pair<float, uint32_t>> q;
     
-    // #pragma omp parallel
+    // 根据PQ编码从lut中查表计算所有向量的近似距离
     {
         std::priority_queue<std::pair<float, uint32_t>> temp_q;
-        // #pragma omp for nowait
         for(int i=0; i<pq_n; i+=4){
             __builtin_prefetch(base_pq + i*4 + 128, 0, 1);
             const uint8_t* idx1 = base_pq + i * 4;
@@ -109,11 +108,9 @@ std::priority_queue<std::pair<float, uint32_t>> pq_search(float* base, float* qu
     }
     
     std::priority_queue<std::pair<float, uint32_t>> rst_q;
-    // #pragma omp parallel
+    // 对候选向量重新计算精确距离，得到最终结果
     {
         std::priority_queue<std::pair<float, uint32_t>> temp_rst;
-        
-        // #pragma omp for nowait
         for(size_t i=0; i<temp_p.size(); ++i){
             uint32_t idx = temp_p[i];
             const float* current = base + idx * vecdim;

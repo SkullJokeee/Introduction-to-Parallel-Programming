@@ -30,8 +30,10 @@ extern size_t cb_dim;
 struct Task;
 struct ThreadPool;
 
-void* thread(void* p){
-    ThreadPool* pool = (ThreadPool*)p;
+size_t P = 200; ////
+
+void* thread(void* P){
+    ThreadPool* pool = (ThreadPool*)P;
 
     size_t sub_d = cb_dim;
     size_t k_pq = 256;
@@ -155,8 +157,7 @@ void* thread(void* p){
             const float* lut2 = lut + 2 * k_pq;
             const float* lut3 = lut + 3 * k_pq;
 
-            size_t p = 200; ////
-            p = std::max(p, k);
+            size_t p = P / 5; ////
 
             for(int i = start; i < last; i++){
                 const uint8_t* idx = pool->base_pq + i * m;
@@ -179,7 +180,7 @@ void* thread(void* p){
                 float d = lut0[idx[0]] + lut1[idx[1]] + lut2[idx[2]] + lut3[idx[3]];
                 uint32_t id = list_ivf[i];
 
-                if(temp_q.size() < p){
+                if(temp_q.size() < P){
                     temp_q.push({d, id});
                 }
                 else if(d < temp_q.top().first){
@@ -208,9 +209,9 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(ThreadPool* pool){
     size_t nprobe = 20;
     nprobe = std::min(nprobe, cb2_n);
 
-    int size = cb2_n / 8;
+    int size = cb2_n / 16;
 
-    for(int i = 0; i < 8; i++){
+    for(int i = 0; i < 16; i++){
         Task t;
         t.type = 0;
         t.start = i * size;
@@ -272,8 +273,6 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(ThreadPool* pool){
     }
     pthread_mutex_unlock(&pool->done_lock);
 
-    size_t p = 200; ////
-    p = std::max(p, k);
     std::priority_queue<std::pair<float, uint32_t>> global_r;
 
     for(int i = 0; i < cb2_n; i++){
@@ -282,7 +281,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(ThreadPool* pool){
             auto pr = temp_q.top();
             temp_q.pop();
 
-            if(global_r.size() < p){
+            if(global_r.size() < P){
                 global_r.push(pr);
             }
             else if(pr.first < global_r.top().first){

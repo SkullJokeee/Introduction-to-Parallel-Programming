@@ -48,20 +48,46 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(float* base, float
         float dis_array[4];
         vst1q_f32(dis_array, sum);
 
-        for (int j = 0; j < 4; ++j) {
-            float d_val = 1.0f - dis_array[j];
-            if(q_ivf.size() < nprobe){
-                q_ivf.push({d_val, i + j});
-            } 
-            else if(d_val < q_ivf.top().first){
-                q_ivf.pop(); 
-                q_ivf.push({d_val, i + j}); 
-            }
+        float d1 = 1.0f - dis_array[0];
+        float d2 = 1.0f - dis_array[1];
+        float d3 = 1.0f - dis_array[2];
+        float d4 = 1.0f - dis_array[3];
+
+        if(q_ivf.size() < nprobe){
+            q_ivf.push({d1, i});
+        } 
+        else if(d1 < q_ivf.top().first){
+            q_ivf.pop(); 
+            q_ivf.push({d1, i}); 
+        }
+        
+        if(q_ivf.size() < nprobe){
+            q_ivf.push({d2, i+1});
+        } 
+        else if(d2 < q_ivf.top().first){
+            q_ivf.pop(); 
+            q_ivf.push({d2, i+1}); 
+        }
+        
+        if(q_ivf.size() < nprobe){
+            q_ivf.push({d3, i+2});
+        } 
+        else if(d3 < q_ivf.top().first){
+            q_ivf.pop(); 
+            q_ivf.push({d3, i+2}); 
+        }
+        
+        if(q_ivf.size() < nprobe){
+            q_ivf.push({d4, i+3});
+        } 
+        else if(d4 < q_ivf.top().first){
+            q_ivf.pop(); 
+            q_ivf.push({d4, i+3}); 
         }
     }
 
-    size_t p = 200;
-    p = std::max(p, top_k);
+    size_t P = 200;
+    P = std::max(P, top_k);
     std::priority_queue<std::pair<float, uint32_t>> q_pq;
     
     float* lut = align<float>(m * k_pq);
@@ -121,7 +147,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(float* base, float
             float d = lut0[idx[0]] + lut1[idx[1]] + lut2[idx[2]] + lut3[idx[3]];
             uint32_t actual_id = lst[i];
 
-            if(q_pq.size() < p) {
+            if(q_pq.size() < P) {
                 q_pq.push({d, actual_id});
             }
             else if(d < q_pq.top().first) {

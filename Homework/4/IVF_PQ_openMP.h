@@ -19,6 +19,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(float* base, float
     
     std::priority_queue<std::pair<float, uint32_t>> q_ivf;
     
+    // 计算查询向量到IVF聚类中心的距离，选出最近的nprobe个簇
     #pragma omp parallel
     {
         std::priority_queue<std::pair<float, uint32_t>> temp_q;
@@ -89,10 +90,11 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(float* base, float
 
     std::priority_queue<std::pair<float, uint32_t>> rst_q;
     
-    size_t p = 500; 
-    p = std::max(p, top_k);
+    size_t P = 500; 
+    P = std::max(P, top_k);
     std::priority_queue<std::pair<float, uint32_t>> q_pq;
     
+    // 对选中簇计算PQ查找表lut，并查表得到近似距离
     #pragma omp parallel
     {
         float* lut = align<float>(m * k_pq);
@@ -146,7 +148,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(float* base, float
                 float d = lut0[idx_pq[0]] + lut1[idx_pq[1]] + lut2[idx_pq[2]] + lut3[idx_pq[3]];
                 uint32_t actual_id = lst[i];
             
-                if(temp_rst.size() < p){
+                if(temp_rst.size() < P){
                     temp_rst.push({d, actual_id});
                 }
                 else if(d < temp_rst.top().first){
@@ -164,7 +166,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(float* base, float
                 auto pr = temp_rst.top();
                 temp_rst.pop();
 
-                if(q_pq.size() < p){
+                if(q_pq.size() < P){
                     q_pq.push(pr);
                 }
                 else if(pr.first < q_pq.top().first){
@@ -175,6 +177,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(float* base, float
         }
     }
 
+    // 对候选向量重新计算精确距离，得到最终结果
     while(!q_pq.empty()) {
         uint32_t actual_id = q_pq.top().second;
         q_pq.pop();

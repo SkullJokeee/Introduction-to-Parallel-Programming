@@ -30,8 +30,8 @@ extern size_t cb_dim;
 struct Task;
 struct ThreadPool;
 
-void* thread(void* p){
-    ThreadPool* pool = (ThreadPool*)p;
+void* thread(void* P){
+    ThreadPool* pool = (ThreadPool*)P;
 
     while(1){
         Task t;
@@ -148,8 +148,8 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(ThreadPool* pool){
 
     std::priority_queue<std::pair<float, uint32_t>> rst_q;
 
-    size_t p = 200; 
-    p = std::max(p, k);
+    size_t P = 200; 
+    P = std::max(P, k);
     std::priority_queue<std::pair<float, uint32_t>> global_r;
 
     size_t sub_d = cb_dim;
@@ -221,7 +221,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(ThreadPool* pool){
             float d = lut0[idx[0]] + lut1[idx[1]] + lut2[idx[2]] + lut3[idx[3]];
             uint32_t id = list_ivf[i];
 
-            if(global_r.size() < p){
+            if(global_r.size() < P){
                 global_r.push({d, id});
             }
             else if(d < global_r.top().first){
@@ -236,7 +236,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_pq_search(ThreadPool* pool){
             float d = lut0[idx[0]] + lut1[idx[1]] + lut2[idx[2]] + lut3[idx[3]];
             uint32_t id = list_ivf[i];
 
-            if(global_r.size() < p){
+            if(global_r.size() < P){
                 global_r.push({d, id});
             }
             else if(d < global_r.top().first){

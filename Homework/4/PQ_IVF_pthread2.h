@@ -36,8 +36,10 @@ extern uint8_t* base_pq;
 struct Task;
 struct ThreadPool;
 
-void* thread(void* p){
-    ThreadPool* pool = (ThreadPool*)p;
+size_t P = 500;
+
+void* thread(void* P){
+    ThreadPool* pool = (ThreadPool*)P;
 
     while(1){
         Task t;
@@ -99,7 +101,7 @@ void* thread(void* p){
             std::priority_queue<std::pair<float, uint32_t>> temp_q;
             uint32_t start = t.start;
             uint32_t end = t.end;
-            size_t p = 500; ////
+            size_t p = P / 5; ////
 
             const float* lut0 = pool->lut;
             const float* lut1 = pool->lut + 256;
@@ -215,9 +217,6 @@ std::priority_queue<std::pair<float, uint32_t>> pq_ivf_search(ThreadPool* pool){
         }
     }
 
-    size_t p = 500;
-    p = std::max(p, k);
-
     int task_id = 0;
     
     while(!q.empty()){
@@ -259,7 +258,7 @@ std::priority_queue<std::pair<float, uint32_t>> pq_ivf_search(ThreadPool* pool){
             auto pr = local_q.top();
             local_q.pop();
 
-            if(q_pq.size() < p){
+            if(q_pq.size() < P){
                 q_pq.push(pr);
             }
             else if(pr.first < q_pq.top().first){

@@ -18,6 +18,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_search(const float* base, co
     
     std::priority_queue<std::pair<float, uint32_t>> q;
     
+    // 计算查询向量到IVF聚类中心的距离，选出最近的nprobe个簇
     #pragma omp parallel
     {
         std::priority_queue<std::pair<float, uint32_t>> temp_q;
@@ -82,6 +83,7 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_search(const float* base, co
     }
     
     std::priority_queue<std::pair<float, uint32_t>> rst_q;
+    // 在选中的簇内对所有向量计算精确距离
     #pragma omp parallel
     {
         std::priority_queue<std::pair<float, uint32_t>> temp_rst;

@@ -11,11 +11,11 @@
 #include <omp.h>
 #include "hnswlib/hnswlib/hnswlib.h"
 #include "flat_scan.h"
-// 可以自行添加需要的头文件
 #include "simd.h"
 #include "SQ_simd.h"
 #include <pthread.h>
 #include <queue>
+#include <atomic>
 
 // #define simd
 #define Pthread
@@ -26,12 +26,11 @@
 // #define flat_scan
 // #define flat
 // #define sq
-// #define pq
+#define pq
 // #define ivf
-#define pq_ivf
+// #define pq_ivf
 // #define ivf_pq
 //////
-
 
 using namespace hnswlib;
 
@@ -60,42 +59,68 @@ const size_t k_pq = 256;
 
 #define THREAD_N 8
 
-struct Task{
-    int type;
-    int start;
-    int end;
+struct ThreadPool;
+struct PoolArg{
+    ThreadPool* pool;
     int id;
 };
 
 struct ThreadPool{
-    std::queue<Task> tasks;
     std::vector<pthread_t> threads;
-    pthread_mutex_t queue_lock = PTHREAD_MUTEX_INITIALIZER;
-    pthread_mutex_t done_lock = PTHREAD_MUTEX_INITIALIZER;
-    pthread_cond_t queue_cond = PTHREAD_COND_INITIALIZER;
+    std::vector<PoolArg> args;
+    pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t start_cond = PTHREAD_COND_INITIALIZER;
     pthread_cond_t done_cond = PTHREAD_COND_INITIALIZER;
 
     float* query;
-    int num = 0;
     bool isStop = false;
+    int active_threads = 0;
+    int phase = 0;
+    int current_job = 0;
+
+    std::atomic<int> task_idx;
+    int task_max;
+    std::vector<uint32_t> active_clusters;
 
     float* lut = nullptr;
     float* cb_dis = nullptr;
-    std::vector<std::priority_queue<std::pair<float, uint32_t>>> task_rst;
+    std::vector<std::priority_queue<std::pair<float, uint32_t>>> thread_rst;
 
     float* pq_cb = nullptr;
     uint8_t* base_pq = nullptr;
 
-    ThreadPool() : threads(THREAD_N) {}
+    ThreadPool() : threads(THREAD_N), args(THREAD_N), thread_rst(THREAD_N) {
+        for(int i = 0; i < THREAD_N; i++){
+            args[i].pool = this;
+            args[i].id = i;
+        }
+    }
 
     ~ThreadPool() {
         free(lut);
         free(cb_dis);
     }
+
+    void run_phase(int p, int max) {
+        for(int i = 0; i < THREAD_N; i++){
+            thread_rst[i] = std::priority_queue<std::pair<float, uint32_t>>();
+        }
+        task_idx.store(0);
+        task_max = max;
+        pthread_mutex_lock(&lock);
+        phase = p;
+        active_threads = THREAD_N;
+        current_job++;
+        pthread_cond_broadcast(&start_cond);
+        while(active_threads > 0){
+            pthread_cond_wait(&done_cond, &lock);
+        }
+        phase = 0;
+        pthread_mutex_unlock(&lock);
+    }
 };
 
 #if defined(simd) || defined(Query)
-    #include "flat_simd.h"
     #include "PQ_simd.h"
     #include "IVF_simd.h"
     #include "PQ_IVF_simd.h"
@@ -103,9 +128,7 @@ struct ThreadPool{
 #endif
 
 #if defined(Pthread) && !defined(Query)
-    #ifdef flat
-        #include "flat_pthread3.h"
-    #elif defined(pq)
+    #ifdef pq
         #include "PQ_pthread3.h"
     #elif defined(ivf)
         #include "IVF_pthread3.h"
@@ -117,9 +140,7 @@ struct ThreadPool{
 #endif
 
 #if defined(openMP) && !defined(Query)
-    #ifdef flat
-        #include "flat_openMP.h"
-    #elif defined(pq)
+    #ifdef pq
         #include "PQ_openMP.h"
     #elif defined(ivf)
         #include "IVF_openMP.h"
@@ -153,13 +174,13 @@ T *LoadData(std::string data_path, size_t& n, size_t& d)
 struct SearchResult
 {
     float recall;
-    int64_t latency; // 单位us
+    int64_t latency;
 };
 
 void build_index(float* base, size_t base_number, size_t vecdim)
 {
-    const int efConstruction = 150; // 为防止索引构建时间过长，efc建议设置200以下
-    const int M = 16; // M建议设置为16以下
+    const int efConstruction = 150;
+    const int M = 16;
 
     HierarchicalNSW<float> *appr_alg;
     InnerProductSpace ipspace(vecdim);
@@ -241,15 +262,13 @@ void build_index(float* base, size_t base_number, size_t vecdim)
 
 #endif
 
-
-
 int main(int argc, char *argv[])
 {
-    std::string data_path = "anndata/"; //// 本地
+    std::string data_path = "anndata/";
     test_query = LoadData<float>(data_path + "DEEP100K.query.fbin", test_number, vecdim);
     test_gt = LoadData<int>(data_path + "DEEP100K.gt.query.100k.top100.bin", test_number, test_gt_d);
     base = LoadData<float>(data_path + "DEEP100K.base.100k.fbin", base_number, vecdim);
-    // 只测试前2000条查询
+    
     test_number = 2000;
     
     pq_dim = 4;
@@ -259,15 +278,6 @@ int main(int argc, char *argv[])
 
     std::vector<SearchResult> results;
     results.resize(test_number);
-
-    // 如果你需要保存索引，可以在这里添加你需要的函数，你可以将下面的注释删除来查看pbs是否将build.index返回到你的files目录中
-    // 要保存的目录必须是files/*
-    // 每个人的目录空间有限，不需要的索引请及时删除，避免占空间太大
-    // 不建议在正式测试查询时同时构建索引，否则性能波动会较大
-    // 下面是一个构建hnsw索引的示例
-    // build_index(base, base_number, vecdim);
-
-    ////////
 
     size_t tmp1 = 0, tmp2 = 0;
 
@@ -292,7 +302,6 @@ int main(int argc, char *argv[])
         base_ivf   = LoadData<float>("files/ivf_base.bin", tmp1, tmp2);
     #endif
 
-    ////
     #ifdef pq_ivf
         codebook_ivf = LoadData<float>("files/pqivf_ivf_cb.bin", tmp1, tmp2);
         codebook_pq  = LoadData<float>("files/pqivf_pq_cb.bin", tmp1, tmp2);
@@ -314,30 +323,26 @@ int main(int argc, char *argv[])
         omp_set_num_threads(THREAD_N); 
     #endif
 
-    //// 
     struct timeval total_start_time;
     gettimeofday(&total_start_time, NULL);
 
-    // #ifdef Pthread
     #if defined(Pthread) && !defined(Query)
         ThreadPool pool;
         cb_n = m * k_pq;
         pool.lut = align<float>(cb_n);
 
         pool.cb_dis = align<float>(cb2_n);
-        pool.task_rst.resize(cb2_n);
 
         pool.pq_cb = codebook_pq; 
         pool.base_pq = base_pq;
         
         for(int i = 0; i < THREAD_N; i++){
-            pthread_create(&pool.threads[i], NULL, thread, &pool);
+            pthread_create(&pool.threads[i], NULL, thread, &pool.args[i]);
         }
 
     #endif
 
     #if defined(Pthread) && defined(Query)
-
         int num = THREAD_N;
         std::vector<pthread_t> threads(num);
         std::vector<ThreadArg> thread_args(num);
@@ -358,7 +363,7 @@ int main(int argc, char *argv[])
 
     #endif
         
-    // 查询测试代码
+
     #if defined(openMP) && defined(Query)
         #pragma omp parallel for
     #endif
@@ -421,7 +426,6 @@ int main(int argc, char *argv[])
                 res = ivf_pq_search(&pool);
             #endif
         #endif
-        ////////
 
         struct timeval newVal;
         ret = gettimeofday(&newVal, NULL);
@@ -447,19 +451,18 @@ int main(int argc, char *argv[])
     }
     #endif
 
-
     #if defined(Pthread) && !defined(Query)
-        pthread_mutex_lock(&pool.queue_lock);
+        pthread_mutex_lock(&pool.lock);
         pool.isStop = true;
-        pthread_cond_broadcast(&pool.queue_cond);
-        pthread_mutex_unlock(&pool.queue_lock);
+        pthread_cond_broadcast(&pool.start_cond);
+        pthread_mutex_unlock(&pool.lock);
 
         for(int i = 0; i < THREAD_N; i++){
             pthread_join(pool.threads[i], NULL);
         }
     #endif
 
-    struct timeval total_end_time; ////
+    struct timeval total_end_time;
     gettimeofday(&total_end_time, NULL);
     
     const unsigned long Converter = 1000 * 1000;
@@ -491,12 +494,9 @@ int main(int argc, char *argv[])
         delete[] base_pq;
     #endif
 
-    // 浮点误差可能导致一些精确算法平均recall不是1
     std::cout << "average recall: " << avg_recall / test_number << "\n";
-    // 原始指标：单条查询的平均延迟 (Latency)
     std::cout << "average single query latency (us): " << avg_latency / test_number << "\n";
-
-    std::cout << "total time for all queries (us): " << total_latency << "\n"; ////
+    std::cout << "total time for all queries (us): " << total_latency << "\n"; 
     std::cout << "average time per query (us): " << total_latency / test_number << "\n";
 
     return 0;

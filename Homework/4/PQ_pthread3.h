@@ -1,0 +1,174 @@
+#pragma once
+#include <queue>
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include "simd.h"
+#include "flat_simd.h"
+#include <pthread.h>
+#include <atomic>
+
+struct ThreadPool;
+struct PoolArg;
+
+extern float* test_query;
+extern int* test_gt;
+extern float* base;
+extern float* codebook_pq;
+extern uint8_t* base_pq;
+extern size_t test_number;
+extern size_t base_number;
+extern size_t test_gt_d;
+extern size_t vecdim;
+extern size_t pq_n;
+extern size_t cb_n;
+extern size_t pq_dim;
+extern size_t cb_dim;
+extern const size_t k;
+
+void* thread(void* p){
+    PoolArg* arg = (PoolArg*)p;
+    ThreadPool* pool = arg->pool;
+    int tid = arg->id;
+    int job = 0;
+    
+    while(1){
+        pthread_mutex_lock(&pool->lock);
+        while(pool->current_job == job && !pool->isStop){
+            pthread_cond_wait(&pool->start_cond, &pool->lock);
+        }
+        if(pool->isStop){
+            pthread_mutex_unlock(&pool->lock);
+            return NULL;
+        }
+        job = pool->current_job;
+        int current_phase = pool->phase;
+        pthread_mutex_unlock(&pool->lock);
+        
+        if(current_phase == 1){
+            int size = 256 / 8;
+            // 各线程分块计算查询向量到PQ码本的距离并存入lut
+            while(1){
+                int i_task = pool->task_idx.fetch_add(1);
+                if(i_task >= pool->task_max) break;
+                
+                int start = i_task * size;
+                int end = (i_task + 1) * size;
+                
+                for(int j = 0; j < pq_dim; j++){
+                    const float* segment = pool->query + j * cb_dim;
+                    
+                    for(int i = start; i < end; i += 4){
+                        float32x4_t sum1 = vdupq_n_f32(0.0f);
+                        float32x4_t sum2 = vdupq_n_f32(0.0f);
+                        float32x4_t sum3 = vdupq_n_f32(0.0f);
+                        float32x4_t sum4 = vdupq_n_f32(0.0f);
+                        const float* c1 = codebook_pq + (j*256 + i) * cb_dim;
+                        const float* c2 = codebook_pq + (j*256 + i + 1) * cb_dim;
+                        const float* c3 = codebook_pq + (j*256 + i + 2) * cb_dim;
+                        const float* c4 = codebook_pq + (j*256 + i + 3) * cb_dim;
+                        
+                        for(int d = 0; d < cb_dim; d += 4){
+                            float32x4_t q_vec = vld1q_f32(segment + d);
+                            
+                            float32x4_t c1_vec = vld1q_f32(c1 + d);
+                            float32x4_t c2_vec = vld1q_f32(c2 + d);
+                            float32x4_t c3_vec = vld1q_f32(c3 + d);
+                            float32x4_t c4_vec = vld1q_f32(c4 + d);
+                            
+                            sum1 = vmlaq_f32(sum1, q_vec, c1_vec);
+                            sum2 = vmlaq_f32(sum2, q_vec, c2_vec);
+                            sum3 = vmlaq_f32(sum3, q_vec, c3_vec);
+                            sum4 = vmlaq_f32(sum4, q_vec, c4_vec);
+                        }
+                        
+                        float d1 = vaddvq_f32(sum1);
+                        float d2 = vaddvq_f32(sum2);
+                        float d3 = vaddvq_f32(sum3);
+                        float d4 = vaddvq_f32(sum4);
+                        
+                        pool->lut[j*256 + i] = 1.0f - d1;
+                        pool->lut[j*256 + i + 1] = 1.0f - d2;
+                        pool->lut[j*256 + i + 2] = 1.0f - d3;
+                        pool->lut[j*256 + i + 3] = 1.0f - d4;
+                    }
+                }
+            }
+        }
+        
+        pthread_mutex_lock(&pool->lock);
+        pool->active_threads -= 1;
+        if(pool->active_threads == 0){
+            pthread_cond_broadcast(&pool->done_cond);
+        }
+        pthread_mutex_unlock(&pool->lock);
+    }
+    
+    return NULL;
+}
+
+std::priority_queue<std::pair<float, uint32_t>> pq_search(ThreadPool* pool){    
+    std::priority_queue<std::pair<float, uint32_t>> q;
+    size_t p = 2000;
+    p = std::max(p,k);
+    p = std::min(p,pq_n);
+    
+    pool->run_phase(1, 8);
+    
+    std::vector<float> dis(pq_n);
+    const float* lut0 = pool->lut;
+    const float* lut1 = pool->lut + 256;
+    const float* lut2 = pool->lut + 512;
+    const float* lut3 = pool->lut + 768;
+    
+    // 根据PQ编码从lut中查表计算所有向量的近似距离
+    for(int i = 0; i < pq_n; i+=4){
+        __builtin_prefetch(base_pq + i * 4 + 128, 0, 1);
+        const uint8_t* idx1 = base_pq + i * 4;
+        const uint8_t* idx2 = base_pq + (i + 1) * 4;
+        const uint8_t* idx3 = base_pq + (i + 2) * 4;
+        const uint8_t* idx4 = base_pq + (i + 3) * 4;
+        float d1 = lut0[idx1[0]] + lut1[idx1[1]] + lut2[idx1[2]] + lut3[idx1[3]];
+        float d2 = lut0[idx2[0]] + lut1[idx2[1]] + lut2[idx2[2]] + lut3[idx2[3]];
+        float d3 = lut0[idx3[0]] + lut1[idx3[1]] + lut2[idx3[2]] + lut3[idx3[3]];
+        float d4 = lut0[idx4[0]] + lut1[idx4[1]] + lut2[idx4[2]] + lut3[idx4[3]];
+        
+        dis[i] = d1;
+        dis[i+1] = d2;
+        dis[i+2] = d3;
+        dis[i+3] = d4;
+    }
+    
+    for(int i = 0; i < pq_n; i++){
+        if(q.size() < p){
+            q.push({dis[i], i});
+        }
+        else{
+            if(dis[i] < q.top().first){
+                q.pop();
+                q.push({dis[i], i});
+            }
+        }
+    }
+    
+    std::priority_queue<std::pair<float, uint32_t>> rst_q;
+    // 对候选向量重新计算精确距离，得到最终结果
+    while(!q.empty()){
+        uint32_t idx = q.top().second;
+        q.pop();
+        const float* current = base + idx * vecdim;
+        float dis = InnerProductSIMDNeon(current, pool->query, vecdim);
+        
+        if(rst_q.size() < k){
+            rst_q.push({dis, idx});
+        }
+        else{
+            if(dis < rst_q.top().first){
+                rst_q.pop(); 
+                rst_q.push({dis, idx});
+            }
+        }
+    }
+    
+    return rst_q;
+}

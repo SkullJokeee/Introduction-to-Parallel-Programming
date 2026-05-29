@@ -30,8 +30,8 @@ extern uint32_t* list_ivf;
 extern float* base_ivf;
 extern float* codebook_ivf;
 
-void* thread(void* p){
-    ThreadPool* pool = (ThreadPool*)p;
+void* thread(void* P){
+    ThreadPool* pool = (ThreadPool*)P;
     while(1){
         Task t;
 
@@ -176,9 +176,9 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_search(ThreadPool* pool){
     size_t nprobe = 20;
     nprobe = std::min(nprobe, cb2_n);
 
-    int size = cb2_n / 8; 
+    int size = cb2_n / 16; 
 
-    for(int i = 0; i < 8; i++){
+    for(int i = 0; i < 16; i++){
         Task t;
 
         t.type = 0;
@@ -250,15 +250,15 @@ std::priority_queue<std::pair<float, uint32_t>> ivf_search(ThreadPool* pool){
         auto& local_q = pool->task_rst[i];
 
         while(!local_q.empty()){
-            auto p = local_q.top();
+            auto P = local_q.top();
             local_q.pop();
 
             if(rst_q.size() < k){
-                rst_q.push(p);
+                rst_q.push(P);
             }
-            else if(p.first < rst_q.top().first){
+            else if(P.first < rst_q.top().first){
                 rst_q.pop();
-                rst_q.push(p);
+                rst_q.push(P);
             }
 
         }
