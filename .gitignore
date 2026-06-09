@@ -5,9 +5,10 @@
 !README.md
 
 !Homework/
-!Homework/2
-!Homework/3
-!Homework/4
+!Homework/1cpu
+!Homework/2simd
+!Homework/3threads
+!Homework/4mpi
 
 !Homework/**/*.cpp
 !Homework/**/*.cc
