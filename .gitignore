@@ -9,9 +9,11 @@
 !Homework/2simd
 !Homework/3threads
 !Homework/4mpi
+!Homework/5gpu
 
 !Homework/**/*.cpp
 !Homework/**/*.cc
 !Homework/**/*.h
 !Homework/**/*.py
 !Homework/**/*.pdf
+!Homework/**/*.cu
