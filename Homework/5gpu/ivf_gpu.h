@@ -3,7 +3,7 @@
 #include <device_launch_parameters.h>
 #include <cstdint>
 
-#define nprobe 50
+#define nprobe 40
 #define k 10
 #define tile_size 16
 

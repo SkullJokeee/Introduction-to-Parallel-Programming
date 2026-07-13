@@ -17,8 +17,8 @@
 #include <pthread.h>
 #include <queue>
 
-// #define simd
-#define Pthread
+#define simd
+// #define Pthread
 // #define openMP
 
 // #define Query
@@ -28,8 +28,8 @@
 // #define sq
 // #define pq
 // #define ivf
-#define pq_ivf
-// #define ivf_pq
+// #define pq_ivf
+#define ivf_pq
 //////
 
 

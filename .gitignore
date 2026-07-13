@@ -10,6 +10,9 @@
 !Homework/3threads
 !Homework/4mpi
 !Homework/5gpu
+!Homework/6end
+!Homework/6end/pre_add
+!Homework/6end/add
 
 !Homework/**/*.cpp
 !Homework/**/*.cc
